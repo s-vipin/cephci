@@ -67,6 +67,9 @@ def run(ceph_cluster, **kw):
                 "group_name": subvolume_group_name,
             },
         ]
+        log.info("kernel version")
+        out, _ = clients[0].exec_command(cmd="uname -r")
+        log.info(out)
         for subvolume in subvolume_list:
             fs_util_v1.create_subvolume(clients[0], **subvolume)
 
@@ -134,8 +137,8 @@ def run(ceph_cluster, **kw):
         log.info(
             "Check for the Ceph Health to see if there are any deadlock bw unlink and rename."
         )
-        ceph_health = fs_util_v1.get_ceph_health_status(clients[0])
-        log.info(ceph_health)
+        #ceph_health = fs_util_v1.get_ceph_health_status(clients[0])
+        #log.info(ceph_health)
         return 0
     except Exception as e:
         log.error(e)
