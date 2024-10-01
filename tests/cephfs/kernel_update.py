@@ -39,6 +39,9 @@ def run(ceph_cluster, **kw):
         elif "post" in pre_or_post:
             log.info("This is a Post verification")
             verification_type.append("post")
+        elif "redirected" in pre_or_post:
+            log.info("This is a Redirected verification")
+            verification_type.append("redirected")
         else:
             log.error("Invalid repo file")
             log.error("The repo file should contain [pre] or [post]")
@@ -145,6 +148,24 @@ def run(ceph_cluster, **kw):
                 if kernel_version not in kernel_package:
                     log.error("Kernel update failed")
                     return 1
+        elif "redirected" in verification_type:
+            log.info(url)
+            for cnode in ceph_nodes:
+                cnode.exec_command(
+                    sudo=True,
+                    cmd=f"echo -e '[{url}]\nname=created by yum config-manager from {url}\nbaseurl={url}\ngpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rh_add_repo_kernel.repo",
+                )
+                cnode.exec_command(
+                    sudo=True,
+                    cmd="yum update kernel -y --nogpgcheck",
+                )
+                cnode.exec_command(sudo=True, cmd="sudo reboot", check_ec=False)
+                time.sleep(60)
+                cnode.reconnect()
+                kernel_version, rc = cnode.exec_command(sudo=True, cmd="uname -r")
+                kernel_version = kernel_version.rstrip()
+                kernel_package = kernel_package.rstrip()
+                log.info(f"Updated kernel version is {kernel_version}")
         else:
             log.error("Invalid repo file")
             log.error("The repo file should start with either [pre] or [post]")
