@@ -1,6 +1,6 @@
 """
 The file contain the method to check the customer issue-
- CEPH-83593996 - Check that the Ceph cluster logs are being generated appropriately according to the log level
+ CEPH-83595932-To verify crashes while executing drain and mgr failover commands
 """
 
 import datetime
@@ -21,7 +21,7 @@ log = Log(__name__)
 
 def run(ceph_cluster, **kw):
     """
-    # CEPH-83593996
+    # CEPH-83595932
     Bug id - https://bugzilla.redhat.com/show_bug.cgi?id=2305677
     1. Configure a cluster that have more than four OSD nodes
     2. Select an OSD node and drain the node
@@ -42,7 +42,7 @@ def run(ceph_cluster, **kw):
     service_obj = ServiceabilityMethods(cluster=ceph_cluster, **config)
     ceph_nodes = kw.get("ceph_nodes")
     config = kw["config"]
-
+    cmd_unset_unmanaged = ""
     replicated_config = config.get("replicated_pool")
     pool_name = replicated_config["pool_name"]
     active_osd_list = rados_obj.get_active_osd_list()
@@ -51,7 +51,7 @@ def run(ceph_cluster, **kw):
         log.error("Failed to create the  Pool")
         return 1
 
-    rados_obj.bench_write(pool_name=pool_name, byte_size="5M", rados_write_duration=90)
+    rados_obj.bench_write(pool_name=pool_name, byte_size="5M", rados_write_duration=180)
     mgr_daemon = Thread(
         target=background_mgr_task, kwargs={"mgr_object": mgr_obj}, daemon=True
     )
@@ -64,7 +64,7 @@ def run(ceph_cluster, **kw):
     for node in ceph_nodes:
         if node.role == "mgr":
             mgr_host_object_list.append(node)
-            log.debug(f"The mgr host node is{node.hostname}")
+            log.debug(f"The mgr host node is {node.hostname}")
 
     mgr_daemon_list = mgr_obj.get_mgr_daemon_list()
     log.debug(f"The MGR daemons list are -{mgr_daemon_list}")
@@ -135,6 +135,12 @@ def run(ceph_cluster, **kw):
         log.info(
             f"The OSDs in the drain node before starting the test - {osd_count_before_test} "
         )
+        cmd_set_unmanaged = (
+            "ceph orch apply osd --all-available-devices --unmanaged=true"
+        )
+        rados_obj.client.exec_command(cmd=cmd_set_unmanaged, sudo=True)
+
+        time.sleep(10)
         mgr_daemon.start()
         service_obj.remove_custom_host(host_node_name=drain_host)
         time.sleep(300)
@@ -152,6 +158,12 @@ def run(ceph_cluster, **kw):
                 "The traceback messages are noticed in logs.The error snippets are noticed in the MGR logs"
             )
             return 1
+        cmd_unset_unmanaged = (
+            "ceph orch apply osd --all-available-devices --unmanaged=false"
+        )
+        rados_obj.client.exec_command(cmd=cmd_unset_unmanaged, sudo=True)
+        time.sleep(10)
+
         log.info(
             "Adding the node by providing the deploy_osd as False, because the script is not setting the "
             "--unmanaged=true.Once the node is added back to the cluster the OSDs get configured automatically"
@@ -237,6 +249,8 @@ def run(ceph_cluster, **kw):
         log.info(
             "\n \n ************** Execution of finally block begins here *************** \n \n"
         )
+        rados_obj.client.exec_command(cmd=cmd_unset_unmanaged, sudo=True)
+        time.sleep(10)
         if replicated_config.get("delete_pool"):
             rados_obj.delete_pool(pool=pool_name)
         time.sleep(5)
