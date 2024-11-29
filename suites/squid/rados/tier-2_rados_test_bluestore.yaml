@@ -160,3 +160,34 @@ tests:
           obj_end: 15
           normal_objs: 400
           num_keys_obj: 200001
+
+  - test:
+      name: Ceph Volume utility Zap with device path and destroy flag
+      module: test_cephvolume_workflows.py
+      polarion-id:
+      desc: verify ceph-volume lvm zap functionality with device path and destroy flag
+      config:
+        zap:
+          destroy: true 
+          device_path: true 
+
+  - test:
+      name: Ceph Volume utility Zap with OSD ID and destroy flag
+      module: test_cephvolume_workflows.py
+      polarion-id:
+      desc: verify ceph-volume lvm zap functionality with OSD ID and destroy flag
+      config:
+        zap:
+          destroy: true 
+          osd_id: true 
+
+  - test:
+      name: Ceph Volume utility Zap with OSD FSID path and destroy flag
+      module: test_cephvolume_workflows.py
+      polarion-id:
+      desc: verify ceph-volume lvm zap functionality with OSD FSID and destroy flag
+      config:
+        zap:
+          destroy: true 
+          osd_fsid: true 
+        
