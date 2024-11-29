@@ -4615,3 +4615,18 @@ EOF"""
         out = self.run_ceph_command(cmd=_cmd, client_exec=True)
 
         return out["pools"][0] if pool_name else out
+
+    def get_device_rejected_reasons(self, node_name: str, device_path: str):
+        """
+        Method to fetch list of osd device rejected reasons on the provided node.
+            Args:
+                node_name: node hostname
+                device: device path
+            Returns:
+                List of osd device reject reasons on the node.
+        """
+        for _ in range(5):
+            device_list = self.get_orch_device_list(node_name)
+        for path_list in device_list[0]["devices"]:
+            if path_list["path"] == device_path:
+                return path_list["rejected_reasons"]
