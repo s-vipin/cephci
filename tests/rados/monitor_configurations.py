@@ -155,6 +155,55 @@ class MonElectionStrategies:
         cmd = "ceph osd tree"
         osds = self.rados_obj.run_ceph_command(cmd)
         return [entry["name"] for entry in osds["nodes"] if entry["type"] == "host"]
+    
+    def disallowed_leader_checks(self, mon:str) -> bool:
+
+        log.info(
+        f"Validating Mon {mon} is not elected leader after adding Mon to disallow list"
+        )
+        
+        leader = self.get_mon_quorum_leader()
+        if mon == leader:
+            raise AssertionError(
+                f"Mon with rank 0 [{mon}] was added to disallow list,"
+                "but was elected as leader in disallow mode"
+                )
+        
+        log.info(
+            f"Successfully validated Mon {mon} is not leader. Current leader is {leader}"
+            f"Validating Mon {mon} is part of disallowed list"
+        )
+        
+        disallowed_list = self.get_disallowed_mon_list()
+        if mon not in disallowed_list:
+            raise AssertionError(
+                f"Mon with rank 0 [{mon}] was added to disallow list,"
+                "but not present in disallow list"
+                )
+        
+        log.info(
+            f"Successfully validated Mon {mon} is part of disallow list"
+            f"Validating Mon {mon} is part of Monitor quorum"
+        )
+
+        quorum = list(self.get_mon_quorum().keys())
+        if mon not in quorum:
+            raise AssertionError(
+                f"Mon with rank 0 [{mon}] was added to disallow list,"
+                "but removed from quorum"
+                )
+        
+        log.info(
+            f"Successfully validated Mon {mon} is still part of quorum"
+            f"Changing election strategy to Connectivity mode"
+        )
+
+
+        log.info(
+            f"Verified Mon {mon} is not elected leader"
+            f"Verified Mon {mon} is part of disallowed leaders list"
+            f"Verified Mon {mon} is part of Monitor quorum"
+            )
 
 
 class MonConfigMethods:
