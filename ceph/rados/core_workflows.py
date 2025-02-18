@@ -729,6 +729,15 @@ class RadosOrchestrator:
         cmd = f"sudo ceph osd ls-tree {osd_node.hostname}"
         return self.run_ceph_command(cmd=cmd)
 
+    def collect_osd_daemon_ids_by_hostname(self, osd_node_hostname:str) -> list:
+        """
+        The method is used to collect the various OSD daemons present on a particular node
+        :param osd_node_hostname: name of the OSD node on which osd daemon details are collected
+        :return: list of OSD ID's
+        """
+        cmd = f"sudo ceph osd ls-tree {osd_node_hostname}"
+        return self.run_ceph_command(cmd=cmd)
+
     def enable_balancer(self, **kwargs) -> bool:
         """
         Enables the balancer module with the given mode
@@ -4433,7 +4442,8 @@ EOF"""
 
         cmd_set_managed_flag = f"ceph orch set-managed {daemon}"
         self.client.exec_command(sudo=True, cmd=cmd_set_managed_flag)
-
+        if daemon == "osd.all-available-devices":
+            daemon = "osd"
         base_cmd = "ceph orch ls"
         cmd = f"{base_cmd} {daemon}"
         duration = 300  # 5 minutes
