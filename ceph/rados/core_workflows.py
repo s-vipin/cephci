@@ -4405,6 +4405,8 @@ EOF"""
 
         cmd_set_unmanaged_flag = f"ceph orch set-unmanaged {daemon}"
         self.client.exec_command(sudo=True, cmd=cmd_set_unmanaged_flag)
+        if daemon == "osd.all-available-devices":
+            daemon = "osd"
         base_cmd = "ceph orch ls"
         cmd = f"{base_cmd} {daemon}"
         duration = 300  # 5 minutes

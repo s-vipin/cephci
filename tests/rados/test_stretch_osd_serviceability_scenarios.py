@@ -18,14 +18,17 @@ from ceph.rados import utils
 from ceph.rados.core_workflows import RadosOrchestrator
 from ceph.rados.pool_workflows import PoolFunctions
 from ceph.rados.serviceability_workflows import ServiceabilityMethods
-from tests.rados.rados_test_util import get_device_path, wait_for_device_rados
+from tests.rados.rados_test_util import wait_for_device_rados
 from tests.rados.stretch_cluster import wait_for_clean_pg_sets
 from tests.rados.test_stretch_site_down import (
     get_stretch_site_hosts,
     stretch_enabled_checks,
 )
 from utility.log import Log
-from utility.utils import method_should_succeed, should_not_be_empty
+from utility.utils import method_should_succeed
+from ceph.rados.rados_scrub import RadosScrubber
+import random 
+from tests.rados import rados_test_util as rados_utils
 
 log = Log(__name__)
 
@@ -51,6 +54,7 @@ def run(ceph_cluster, **kw):
     stretch_bucket = config.get("stretch_bucket", "datacenter")
     tiebreaker_mon_site_name = config.get("tiebreaker_mon_site_name", "tiebreaker")
     add_network_delay = config.get("add_network_delay", False)
+    scrub_object = RadosScrubber(node=cephadm)
 
     def check_stretch_health_warning():
         """
@@ -76,6 +80,275 @@ def run(ceph_cluster, **kw):
             return True
         log.info("Warning not present on the cluster")
         return False
+
+    def validate_osd_removal_scenario(ceph_cluster, rados_obj, rhbuild, pool_name, dc_1_osds_to_remove:list,
+                                      dc_2_osds_to_remove:list, dc_1_osds, dc_2_osds):
+        """
+        Method to perform osd removal scenario in stretch mode. 
+
+        Steps:
+        1) collect number of objects in the pool
+        2) Remove osd from DC1 and DC2 which as passed as arguements
+        3) Perform checks on the cluster post osd removal
+            - Health warning - UNEVEN_WEIGHTS_STRETCH_MODE
+            - PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2
+            - Check PG is equally distributed among datacenter DC1 and DC2
+            - PGs should reach active+clean state
+            - Pool sanity checks should be successful
+            - No inactive PGs on the pool
+            - Write IO should succeed
+        4) Add back removed osds
+        5) Perform checks on the cluster post osd addition
+            - Health warning should be removed UNEVEN_WEIGHTS_STRETCH_MODE 
+            - PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2 
+            - Check PG is equally distributed among datacenter DC1 and DC2 
+            - PGs should reach active+clean state 
+            - Pool sanity checks should be successful 
+            - No inactive PGs on the pool 
+            - Write IO should succeed 
+            - Objects should be more than the initial no of objects
+        """
+        log.info(f"DC1 osds to remove and add back: {dc_1_osds_to_remove}")
+        log.info(f"DC2 osds to remove and add back: {dc_2_osds_to_remove}")
+
+        # Collecting the initial number of objects on the pool, before osd removal 
+        pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
+        init_objects = pool_stat["stats"]["objects"]
+
+        rados_obj.change_recovery_threads(config={}, action="set")
+        dev_paths = {}
+        osd_to_test_hosts_map = {}
+
+        log.info(f"Proceeding to perform Check (1) PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2")
+        datacenter_pg_count(ceph_cluster, scrub_object,rados_obj,  dc_1_hosts, dc_2_hosts, dc_1_osds, dc_2_osds)
+
+        log.info(f"Proceeding to perform Check (2) Check PG is equally distributed among datacenter DC1 and DC2")
+        validate_pg_osds(rados_obj, ceph_cluster, scrub_object, dc_1_hosts, dc_2_hosts, dc_1_osds, dc_2_osds)
+
+        rados_obj.set_unmanaged_flag("osd.all-available-devices")
+
+        print("OSDS to remove are ",dc_1_osds_to_remove+dc_2_osds_to_remove )
+        for target_osd in dc_1_osds_to_remove+dc_2_osds_to_remove:
+            test_host = rados_obj.fetch_host_node(daemon_type="osd", daemon_id=target_osd)
+            log.info(f"Removing OSD {target_osd} from host {test_host.hostname} on datacenter DC1")
+            dev_paths[test_host.hostname] = rados_utils.get_device_path(test_host, target_osd)
+            osd_to_test_hosts_map[target_osd] = test_host
+            utils.osd_remove(ceph_cluster=ceph_cluster, osd_id=target_osd, zap=True, force=True)
+            method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+            method_should_succeed(wait_for_device_rados, test_host, target_osd, action="remove")
+
+        log.info("""Performing following checks on the cluster after OSD removal 
+1) PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2
+2) Check PG is equally distributed among datacenter DC1 and DC2
+3) Health warning - UNEVEN_WEIGHTS_STRETCH_MODE
+4) PGs should reach active+clean state
+5) Pool sanity checks should be successful
+6) No inactive PGs on the pool
+7) Write IO should succeed""")
+        
+        log.info(f"Proceeding to perform Check (3) Health warning - UNEVEN_WEIGHTS_STRETCH_MODE")
+        if float(rhbuild.split("-")[0]) >= 7.1 and len(dc_1_osds_to_remove) != len(dc_2_osds_to_remove):
+            if not check_stretch_health_warning():
+                log.error("Warnings not removed on the cluster post osd addition")
+                raise Exception("Warning present on cluster")
+
+        log.info(f"Proceeding to perform Check (4) PGs should reach active+clean state")
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+
+        log.info("Proceeding to perform Check (5) Pool sanity checks should be successful")
+        method_should_succeed(rados_obj.run_pool_sanity_check)
+
+        log.info("Proceeding to perform Check (6) No inactive PGs on the pool")
+        if not rados_obj.check_inactive_pgs_on_pool(pool_name=pool_name):
+            log.error(f"Inactive PGs found on pool : {pool_name}")
+
+        log.info("Proceeding to perform Check (7) Write IO should succeed")
+        pool_obj.do_rados_put(client=client_node, pool=pool_name, nobj=200, timeout=50)
+
+        log.info(f"Proceeding to add back removed OSDs:\
+                 DC1 OSDs: {dc_1_osds_to_remove} \
+                 DC2 OSDs: {dc_2_osds_to_remove}")
+        
+        print(osd_to_test_hosts_map)
+        for target_osd in dc_1_osds_to_remove+dc_2_osds_to_remove:
+            test_host = osd_to_test_hosts_map[target_osd]
+            utils.add_osd(ceph_cluster, test_host.hostname, dev_paths[test_host.hostname], target_osd)
+            method_should_succeed(
+                wait_for_device_rados, test_host, target_osd, action="add"
+            )
+            time.sleep(30)
+
+        log.info(f"Successfully removed and added back removed OSDs:\
+                 DC1 OSDs: {dc_1_osds_to_remove} \
+                 DC2 OSDs: {dc_2_osds_to_remove}")
+
+        log.info("""Performing following checks on the cluster after OSD addition post removal 
+1) Health warning should be removed UNEVEN_WEIGHTS_STRETCH_MODE 
+2) PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2 
+3) Check PG is equally distributed among datacenter DC1 and DC2 
+4) PGs should reach active+clean state 
+5) Pool sanity checks should be successful 
+6) No inactive PGs on the pool 
+7) Write IO should succeed 
+8) Objects should be more than the initial no of objects""")
+        
+        log.info(f"Proceeding to perform Check (1) Health warning should be removed UNEVEN_WEIGHTS_STRETCH_MODE")
+        if float(rhbuild.split("-")[0]) >= 7.1:
+            if check_stretch_health_warning():
+                log.error("Warnings not removed on the cluster post osd addition")
+                raise Exception("Warning present on cluster")
+            
+        rados_obj.set_managed_flag("osd.all-available-devices")
+        
+        log.info(f"Proceeding to perform Check (2) PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2")
+        datacenter_pg_count(ceph_cluster, scrub_object,rados_obj,  dc_1_hosts, dc_2_hosts, dc_1_osds, dc_2_osds)
+
+        log.info(f"Proceeding to perform Check (3) Check PG is equally distributed among datacenter DC1 and DC2")
+        validate_pg_osds(rados_obj, ceph_cluster, scrub_object, dc_1_hosts, dc_2_hosts, dc_1_osds, dc_2_osds)
+
+        log.info(f"Proceeding to perform Check (4) PGs should reach active+clean state")
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+
+        log.info("Proceeding to perform Check (5) Pool sanity checks should be successful")
+        method_should_succeed(rados_obj.run_pool_sanity_check)
+
+        log.info("Proceeding to perform Check (6) No inactive PGs on the pool")
+        if not rados_obj.check_inactive_pgs_on_pool(pool_name=pool_name):
+            log.error(f"Inactive PGs found on pool : {pool_name}")
+        
+        log.info("Proceeding to perform Check (7) Write IO should succeed")
+        pool_obj.do_rados_put(client=client_node, pool=pool_name, nobj=200, timeout=50)
+
+        log.debug("sleeping for 20 seconds for the objects to be displayed in ceph df")
+        time.sleep(20)
+
+        pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
+        log.debug(pool_stat)
+        post_osd_rm_objs = pool_stat["stats"]["objects"]
+
+        # Objects should be more than the initial no of objects
+        if post_osd_rm_objs != init_objects+400:
+            log.error(
+                "Write ops should be possible, number of objects in the pool has not changed"
+            )
+            raise Exception(
+                f"Pool {pool_name} has {pool_stat['stats']['objects']} objs"
+            )
+        log.info(
+            f"Successfully wrote {pool_stat['stats']['objects']} on pool {pool_name} in degraded mode\n"
+            f"Proceeding to bring up the nodes and recover the cluster from degraded mode"
+        )
+
+
+    def validate_host_removal_scenario(dc_1_hosts_to_remove, dc_2_hosts_to_remove):
+        """
+        1) Drain osd host - ceph orch host drain
+        2) Wait until all process are drained
+        3) Check osd rm status
+        4) Once hosts are drained host is removed
+        5) Checks are performed once host is removed from cluster 
+            - Health warning - UNEVEN_WEIGHTS_STRETCH_MODE
+            - PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2 
+            - Check PG is equally distributed among datacenter DC1 and DC2 
+            - PGs should reach active+clean state 
+            - Pool sanity checks should be successful 
+            - No inactive PGs on the pool 
+            - Write IO should succeed 
+        6) Add removed hosts back to the cluster
+        7) Checks are performed once removed hosts are added back 
+            - Health warning - UNEVEN_WEIGHTS_STRETCH_MODE
+            - PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2 
+            - Check PG is equally distributed among datacenter DC1 and DC2 
+            - PGs should reach active+clean state 
+            - Pool sanity checks should be successful 
+            - No inactive PGs on the pool 
+            - Write IO should succeed 
+            - Objects should be more than the initial no of objects
+        """
+
+        pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
+        init_objects = pool_stat["stats"]["objects"]
+        test_hosts_map = {}
+
+        for hostname in dc_1_hosts_to_remove + dc_2_hosts_to_remove:
+            test_host=rados_obj.get_host_object(hostname=hostname)
+            test_hosts_map[hostname] = test_host
+            service_obj.remove_custom_host(host_node_name=test_host.hostname)
+        time.sleep(10)
+
+        # Validation post OSD host removal
+        # 1) Health warning - UNEVEN_WEIGHTS_STRETCH_MODE
+        # 2) PG has 2 OSD from datacenter DC1 and 2 OSD from datacenter DC2 
+        # 3) Check PG is equally distributed among datacenter DC1 and DC2 
+        # 4) PGs should reach active+clean state 
+        # 5) Pool sanity checks should be successful 
+        # 6) No inactive PGs on the pool 
+        # 7) Write IO should succeed 
+        if not rados_obj.check_inactive_pgs_on_pool(pool_name=pool_name):
+            log.error(f"Inactive PGs found on pool : {pool_name}")
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        method_should_succeed(rados_obj.run_pool_sanity_check)
+        # Checking if the expected health warning about the different site weights is displayed post removal of OSD host
+        if float(rhbuild.split("-")[0]) >= 7.1:
+            if not check_stretch_health_warning():
+                log.error(
+                    "Warnings is not displayed on the cluster post osd host removal"
+                )
+                raise Exception("Warning not present on cluster")
+        pool_obj.do_rados_put(client=client_node, pool=pool_name, nobj=200, timeout=50)
+        datacenter_pg_count(ceph_cluster, scrub_object,rados_obj,  dc_1_hosts, dc_2_hosts, dc_1_osds, dc_2_osds)
+        validate_pg_osds(rados_obj, ceph_cluster, scrub_object, dc_1_hosts, dc_2_hosts, dc_1_osds, dc_2_osds)
+
+        for hostname in dc_1_hosts_to_remove:
+            test_host=test_hosts_map[hostname]
+
+            if hostname in dc_1_hosts:
+                crush_bucket_val = "DC1"
+            else:
+                crush_bucket_val = "DC2"
+
+            service_obj.add_new_hosts(
+                add_nodes=[test_host.hostname],
+                crush_bucket_name=test_host.hostname,
+                crush_bucket_type=stretch_bucket,
+                crush_bucket_val=crush_bucket_val,
+            )
+
+            time.sleep(60)
+
+        # Waiting for recovery to post OSD host Addition
+        if not rados_obj.check_inactive_pgs_on_pool(pool_name=pool_name):
+            log.error(f"Inactive PGs found on pool : {pool_name}")
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        method_should_succeed(rados_obj.run_pool_sanity_check)
+        # Checking if the health warning about the different site weights is removed post addition of OSD host
+        if float(rhbuild.split("-")[0]) >= 7.1:
+            if check_stretch_health_warning():
+                log.error(
+                    "Warnings is not removed on the cluster post osd host addition"
+                )
+                raise Exception("Warning present on cluster")
+        pool_obj.do_rados_put(client=client_node, pool=pool_name, nobj=200, timeout=50)
+
+        log.debug("sleeping for 20 seconds for the objects to be displayed in ceph df")
+        time.sleep(20)
+        pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
+        log.debug(pool_stat)
+        post_osd_rm_objs = pool_stat["stats"]["objects"]
+
+        # Objects should be more than the initial no of objects
+        if post_osd_rm_objs != init_objects + 400:
+            log.error(
+                "Write ops should be possible, number of objects in the pool has not changed"
+            )
+            raise Exception(
+                f"Pool {pool_name} has {pool_stat['stats']['objects']} objs"
+            )
+        log.info(
+            f"Successfully wrote {pool_stat['stats']['objects']} on pool {pool_name} in degraded mode\n"
+            f"Proceeding to bring up the nodes and recover the cluster from degraded mode"
+        )
+
 
     try:
         if not stretch_enabled_checks(rados_obj=rados_obj):
@@ -323,6 +596,67 @@ def run(ceph_cluster, **kw):
         log.info("Completed OSD Host replacement scenarios")
         log.info("Successfully removed and added hosts on stretch mode cluster")
 
+        osd_tree = rados_obj.run_ceph_command("ceph osd tree")
+        print(osd_tree)
+        # Creates a map as below
+        # {
+        #  'DC1': {
+        #          'ceph-vipin-squid-409n7m-node2': ['15', '11', '7', '3'],
+        #          'ceph-vipin-squid-409n7m-node3': ['14', '10', '4', '0']
+        #          },
+        #  'DC2': {
+        #          'ceph-vipin-squid-409n7m-node4': ['13', '9', '6', '1'],
+        #          'ceph-vipin-squid-409n7m-node5': ['12', '8', '5', '2']
+        #          }
+        # }
+        
+        host_osd_map = {"DC1": {}, "DC2": {}}
+
+        for host in dc_1_hosts:
+            host_osd_map["DC1"][host] = []
+
+        for host in dc_2_hosts:
+            host_osd_map["DC2"][host] = []
+
+        for node in osd_tree["nodes"]:
+            node_name = node["name"] 
+            if node_name in dc_1_hosts:
+              host_osd_map['DC1'][node_name] = node["children"]
+            if node_name in dc_2_hosts:
+              host_osd_map['DC2'][node_name] = node["children"]
+
+        # remove 1 osd from dc1 and 1 osd from dc2
+        for host in dc_1_hosts:
+            dc_1_osds = list(map(str, host_osd_map["DC1"][host]))
+
+        for host in dc_2_hosts:                               
+            dc_2_osds = list(map(str, host_osd_map["DC2"][host]))
+
+        dc_1_osds_to_remove = list(random.choice(dc_1_osds))
+        dc_2_osds_to_remove = list(random.choice(dc_2_osds))
+        validate_osd_removal_scenario(ceph_cluster, rados_obj, rhbuild,pool_name, dc_1_osds_to_remove, dc_2_osds_to_remove, dc_1_osds, dc_2_osds)
+        
+        # remove 1 osd from all host of DC1
+        dc_1_osds_to_remove = [ osd_map["DC1"][host][0] for host in osd_map["DC1"] ]
+        dc_2_osds_to_remove = []
+        validate_osd_removal_scenario(dc_1_osds_to_remove, dc_2_osds_to_remove)
+
+        # remove 1 osd from all host of DC1 and DC2
+        dc_1_osds_to_remove = [ random.choice(host["children"]) for host in osd_map["DC1"] ]
+        dc_2_osds_to_remove = [ random.choice(host["children"]) for host in osd_map["DC2"] ]
+        validate_osd_removal_scenario(dc_1_osds_to_remove, dc_2_osds_to_remove)
+
+        # remove all osd from 1 host of DC1
+        dc_1_osds_to_remove = [ random.choice(host["children"]) for host in osd_map["DC1"] ]
+        dc_2_osds_to_remove = [ random.choice(host["children"]) for host in osd_map["DC2"] ]
+        validate_osd_removal_scenario(dc_1_osds_to_remove, dc_2_osds_to_remove)
+
+        # remove 1 host from DC1 and 1 host from DC2
+        dc_1_hosts_to_remove = [random.choice(dc_1_hosts)]
+        dc_2_hosts_to_remove = [random.choice(dc_2_hosts)]
+        validate_host_removal_scenario(dc_1_hosts_to_remove, dc_2_hosts_to_remove)
+
+
     except Exception as e:
         log.error(f"Failed with exception: {e.__doc__}")
         log.exception(e)
@@ -357,3 +691,45 @@ def run(ceph_cluster, **kw):
 
     log.info("All the tests completed on the cluster, Pass!!!")
     return 0
+
+def validate_pg_osds(rados_obj, ceph_cluster, scrub_object, dc_1_hosts, dc_2_hosts, dc_1_osds, dc_2_osds) -> bool :
+
+    pg_dump = scrub_object.get_pg_dump()
+
+    for pg in pg_dump['pg_map']['pg_stats']:
+        dc_1_osd_count=0
+        dc_2_osd_count=0
+        for osd in pg['acting']:
+            if osd in dc_1_osds:
+                dc_1_osd_count += 1
+            if osd in dc_2_osds:
+                dc_2_osd_count += 1
+        if dc_1_osd_count != 2 and dc_2_osd_count != 2:
+            log.error("PG set does not have 2 OSDs from DC1 and DC2")
+            return False
+
+    return True
+
+def datacenter_pg_count(ceph_cluster, scrub_object, rados_obj, dc_1_hosts, dc_2_hosts, dc_1_osds, dc_2_osds):
+    pg_dump = scrub_object.get_pg_dump()
+
+    dc_1_pg_count = 0
+    dc_2_pg_count = 0
+
+    for osd_stat in pg_dump["pg_map"]["osd_stats"]:
+        osd = osd_stat['osd']
+        pg_sum = osd_stat['num_pgs']
+
+        if osd in dc_1_osds:
+            dc_1_pg_count += int(pg_sum)
+
+        if osd in dc_2_osds:
+            dc_2_pg_count += int(pg_sum)
+
+    log.info(f"Sum of PGs in DC1: {dc_1_pg_count}")
+    log.info(f"Sum of PGs in DC2: {dc_2_pg_count}")
+    if dc_1_pg_count != dc_2_pg_count:
+        log.error("Sum of PGs in DC1 and DC2 are not equal")
+        return False
+
+    return True
