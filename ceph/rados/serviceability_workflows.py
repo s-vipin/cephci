@@ -330,12 +330,12 @@ class ServiceabilityMethods:
                         self.cluster, host=rm_host.hostname, device_path=dev_path
                     )
             # Check that the OSD daemons are exists in the host
-            daemon_check = self.rados_obj.check_daemon_exists_on_host(
-                host=host_node_name, daemon_type=None
-            )
-            if not daemon_check:
-                log.info(f" The node {host_node_name} is already drained.")
-                return None
+            # daemon_check = self.rados_obj.check_daemon_exists_on_host(
+            #     host=host_node_name, daemon_type=None
+            # )
+            # if not daemon_check:
+            #     log.info(f" The node {host_node_name} is already drained.")
+            #     return None
 
             time.sleep(5)
             rm_cmd = f"ceph orch host rm {rm_host.hostname} --force"

@@ -299,7 +299,11 @@ def run(ceph_cluster, **kw):
         log.debug(
             "Checking if any hosts are in Maintenance mode and if found, removing them"
         )
-        hosts = ceph_cluster.get_nodes()
+
+        hosts = list()
+        for host in rados_obj.get_multi_az_stretch_site_hosts(num_data_sites=len(buckets), stretch_bucket="datacenter"):
+            hosts += host
+
         for host in hosts:
             if not host.role == "client":
                 if rados_obj.check_host_status(
