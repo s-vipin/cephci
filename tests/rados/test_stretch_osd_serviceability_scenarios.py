@@ -336,8 +336,8 @@ def run(ceph_cluster, **kw):
 
         dc_1_osds_removed, dc_2_osds_removed = [], []
 
-        for host in dc_1_hosts_to_remove + dc_2_hosts_to_remove:
-            osds = rados_obj.collect_osd_daemon_ids_by_hostname(host)
+        for hostname in dc_1_hosts_to_remove + dc_2_hosts_to_remove:
+            osds = rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[hostname])
             if host in dc_1_hosts:
                 dc_1_osds_removed += osds
             else:
@@ -535,12 +535,12 @@ def run(ceph_cluster, **kw):
         dc_1_osds, dc_2_osds = [], []
 
         log.info(f"Collecting {dc_1_name} osds")
-        for host in dc_1_hosts:
-            dc_1_osds += rados_obj.collect_osd_daemon_ids_by_hostname(host)
+        for hostname in dc_1_hosts:
+            dc_1_osds += rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[hostname])
 
         log.info(f"Collecting {dc_2_name} osds")
-        for host in dc_2_hosts:
-            dc_2_osds += rados_obj.collect_osd_daemon_ids_by_hostname(host)
+        for hostname in dc_2_hosts:
+            dc_2_osds += rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[hostname])
 
         log.info(f"{dc_1_name} osds: {dc_1_osds}")
         log.info(f"{dc_2_name} osds: {dc_2_osds}")
@@ -832,16 +832,16 @@ def run(ceph_cluster, **kw):
 
         dc_1_osds_to_remove = list(
             random.choice(
-                rados_obj.collect_osd_daemon_ids(
+                list(map(str, rados_obj.collect_osd_daemon_ids(
                     hostname_to_cephnode_map[random.choice(dc_1_hosts)]
-                )
+                )))
             )
         )
         dc_2_osds_to_remove = list(
             random.choice(
-                rados_obj.collect_osd_daemon_ids(
+                list(map(str, rados_obj.collect_osd_daemon_ids(
                     hostname_to_cephnode_map[random.choice(dc_2_hosts)]
-                )
+                )))
             )
         )
 
@@ -852,9 +852,9 @@ def run(ceph_cluster, **kw):
         log.info(f"Test #2: Remove 1 osd from all host in {dc_1_name}")
         dc_1_osds_to_remove, dc_2_osds_to_remove = [], []
         for hostname in dc_1_hosts:
-            osd_list = rados_obj.collect_osd_daemon_ids(
+            osd_list = list(map(str,rados_obj.collect_osd_daemon_ids(
                 hostname_to_cephnode_map[hostname]
-            )
+            )))
             dc_1_osds_to_remove.append(random.choice(osd_list))
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
@@ -866,15 +866,15 @@ def run(ceph_cluster, **kw):
         )
         dc_1_osds_to_remove, dc_2_osds_to_remove = [], []
         for hostname in dc_1_hosts:
-            osd_list = rados_obj.collect_osd_daemon_ids(
+            osd_list = list(map(str, rados_obj.collect_osd_daemon_ids(
                 hostname_to_cephnode_map[hostname]
-            )
+            )))
             dc_1_osds_to_remove.append(random.choice(osd_list))
 
         for hostname in dc_2_hosts:
-            osd_list = rados_obj.collect_osd_daemon_ids(
+            osd_list = list(map(str,rados_obj.collect_osd_daemon_ids(
                 hostname_to_cephnode_map[hostname]
-            )
+            )))
             dc_2_osds_to_remove.append(random.choice(osd_list))
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
@@ -882,9 +882,9 @@ def run(ceph_cluster, **kw):
         validate_osd_removal_scenario(dc_1_osds_to_remove, dc_2_osds_to_remove)
 
         log.info("Test #4: Remove all osd from 1 host")
-        dc_1_osds_to_remove = rados_obj.collect_osd_daemon_ids(
+        dc_1_osds_to_remove =  list(map(str, rados_obj.collect_osd_daemon_ids(
             hostname_to_cephnode_map[random.choice(dc_1_hosts)]
-        )
+        )))
         dc_2_osds_to_remove = []
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
