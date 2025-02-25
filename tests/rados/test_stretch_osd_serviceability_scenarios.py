@@ -783,6 +783,7 @@ def run(ceph_cluster, **kw):
                 crush_bucket_name=test_host.hostname,
                 crush_bucket_type=stretch_bucket,
                 crush_bucket_val=test_host_site,
+                osd_label="osd",
             )
         except Exception as err:
             log.error(
