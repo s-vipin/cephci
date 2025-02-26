@@ -614,9 +614,9 @@ def run(ceph_cluster, **kw):
         #         rados_obj.add_network_delay_on_host(
         #             hostname=host, delay="100ms", set_delay=True
         #         )
-        # 
+        #
         #     log.info("Successfully set network delays on the Stretch cluster nodes")
-        # 
+        #
         # Creating test pool to check the effect of Site down on the Pool IO
         if not rados_obj.create_pool(pool_name=pool_name):
             log.error(f"Failed to create pool : {pool_name}")
@@ -624,15 +624,15 @@ def run(ceph_cluster, **kw):
 
         # Sleeping for 10 seconds for pool to be populated in the cluster
         time.sleep(10)
-        # 
+        #
         # # Collecting the init no of objects on the pool, before site down
         # pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
         # init_objects = pool_stat["stats"]["objects"]
         # inactive_pgs = 0
-        # 
+        #
         # # Increasing the recovery threads on the cluster
         # rados_obj.change_recovery_threads(config={}, action="set")
-        # 
+        #
         # # Proceeding to remove one OSD from any of the data sites
         # target_osd = rados_obj.get_pg_acting_set(pool_name=pool_name)[0]
         # log.debug(
@@ -659,29 +659,29 @@ def run(ceph_cluster, **kw):
         # method_should_succeed(
         #     wait_for_device_rados, test_host, target_osd, action="remove"
         # )
-        # 
+        #
         # # Waiting for recovery to post OSD host removal
         # method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
-        # 
+        #
         # # Checking if the expected health warning about the different site weights are seen.
         # if float(rhbuild.split("-")[0]) >= 7.1:
         #     if not check_stretch_health_warning():
         #         log.error("Warnings not generated on the cluster")
         #         raise Exception("Warning not present on cluster")
-        # 
+        #
         # # Checking cluster health after OSD removal
         # method_should_succeed(rados_obj.run_pool_sanity_check)
         # if not rados_obj.check_inactive_pgs_on_pool(pool_name=pool_name):
         #     log.error(f"Inactive PGs found on pool : {pool_name}")
         #     inactive_pgs += 1
-        # 
+        #
         # log.debug(
         #     f"Ceph osd tree after OSD removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
         # )
         # log.info(
         #     f"Removal of OSD : {target_osd} is successful. Proceeding to add back the OSD daemon."
         # )
-        # 
+        #
         # # Adding the removed OSD back and checking the cluster status
         # log.debug("Adding the removed OSD back and checking the cluster status")
         # utils.add_osd(ceph_cluster, test_host.hostname, dev_path, target_osd)
@@ -695,17 +695,17 @@ def run(ceph_cluster, **kw):
         # if not rados_obj.check_inactive_pgs_on_pool(pool_name=pool_name):
         #     log.error(f"Inactive PGs found on pool : {pool_name}")
         #     inactive_pgs += 1
-        # 
+        #
         # if inactive_pgs > 10:
         #     log.error("Found inactive PGs on the cluster during OSD removal/Addition")
         #     raise Exception("Inactive PGs during stop error")
-        # 
+        #
         # # Checking if the expected health warning about the different site weights is removed post addition of OSD.
         # if float(rhbuild.split("-")[0]) >= 7.1:
         #     if check_stretch_health_warning():
         #         log.error("Warnings not removed on the cluster post osd addition")
         #         raise Exception("Warning present on cluster")
-        # 
+        #
         # # Checking cluster health after OSD Addition
         # method_should_succeed(rados_obj.run_pool_sanity_check)
         # log.info(
@@ -713,18 +713,18 @@ def run(ceph_cluster, **kw):
         # )
         # utils.set_osd_devices_unmanaged(ceph_cluster, target_osd, unmanaged=False)
         # log.info("Completed the removal and addition of OSD daemons")
-        # 
+        #
         # # perform rados put to check if write ops is possible
         # pool_obj.do_rados_put(client=client_node, pool=pool_name, nobj=200, timeout=50)
-        # 
+        #
         # log.debug("sleeping for 20 seconds for the objects to be displayed in ceph df")
         # time.sleep(20)
-        # 
+        #
         # # Getting the number of objects post write, to check if writes were successful
         # pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
         # log.debug(pool_stat)
         # post_osd_rm_objs = pool_stat["stats"]["objects"]
-        # 
+        #
         # # Objects should be more than the initial no of objects
         # if post_osd_rm_objs <= init_objects:
         #     log.error(
@@ -738,13 +738,13 @@ def run(ceph_cluster, **kw):
         #     f"Proceeding to bring up the nodes and recover the cluster from degraded mode"
         # )
         # log.info("Completed OSD daemon replacement scenarios")
-        # 
+        #
         # log.info("Proceeding to do OSD host replacement in Stretch mode")
         # test_host_site = dc_1_name if test_host.hostname in dc_1_hosts else dc_2_name
         # log.info(
         #     f"OSD host to be removed : {test_host.hostname} from site {test_host_site}"
         # )
-        # 
+        #
         # log.debug(
         #     f"Ceph osd tree before host removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
         # )
@@ -754,7 +754,7 @@ def run(ceph_cluster, **kw):
         #     log.error(f"Could not remove host : {test_host.hostname}. Error : {err}")
         #     raise Exception("Host not removed error")
         # time.sleep(10)
-        # 
+        #
         # # Waiting for recovery to post OSD host removal
         # if not rados_obj.check_inactive_pgs_on_pool(pool_name=pool_name):
         #     log.error(f"Inactive PGs found on pool : {pool_name}")
@@ -764,7 +764,7 @@ def run(ceph_cluster, **kw):
         # if inactive_pgs > 10:
         #     log.error("Found inactive PGs on the cluster during OSD removal/Addition")
         #     raise Exception("Inactive PGs during stop error")
-        # 
+        #
         # # Checking if the expected health warning about the different site weights is displayed post removal of OSD host
         # if float(rhbuild.split("-")[0]) >= 7.1:
         #     if not check_stretch_health_warning():
@@ -772,7 +772,7 @@ def run(ceph_cluster, **kw):
         #             "Warnings is not displayed on the cluster post osd host removal"
         #         )
         #         raise Exception("Warning not present on cluster")
-        # 
+        #
         # log.debug(
         #     f"Ceph osd tree after host removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
         # )
@@ -791,7 +791,7 @@ def run(ceph_cluster, **kw):
         #     )
         #     raise Exception("Host not added error")
         # time.sleep(60)
-        # 
+        #
         # # Waiting for recovery to post OSD host Addition
         # if not rados_obj.check_inactive_pgs_on_pool(pool_name=pool_name):
         #     log.error(f"Inactive PGs found on pool : {pool_name}")
@@ -801,7 +801,7 @@ def run(ceph_cluster, **kw):
         # if inactive_pgs > 10:
         #     log.error("Found inactive PGs on the cluster during OSD removal/Addition")
         #     raise Exception("Inactive PGs during stop error")
-        # 
+        #
         # # Checking if the health warning about the different site weights is removed post addition of OSD host
         # if float(rhbuild.split("-")[0]) >= 7.1:
         #     if check_stretch_health_warning():
@@ -809,13 +809,13 @@ def run(ceph_cluster, **kw):
         #             "Warnings is not removed on the cluster post osd host addition"
         #         )
         #         raise Exception("Warning present on cluster")
-        # 
+        #
         # # perform rados put to check if write ops is possible
         # pool_obj.do_rados_put(client=client_node, pool=pool_name, nobj=200, timeout=50)
-        # 
+        #
         # log.debug("sleeping for 20 seconds for the objects to be displayed in ceph df")
         # time.sleep(20)
-        # 
+        #
         # log.info("Completed OSD Host replacement scenarios")
         # log.info("Successfully removed and added hosts on stretch mode cluster")
 
@@ -830,8 +830,8 @@ def run(ceph_cluster, **kw):
             f"Test #1: Remove 1 osd from 1 host in {dc_1_name} and 1 osd from 1 host in {dc_2_name}"
         )
 
-        dc_1_osds_to_remove = random.choice([str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[random.choice(dc_1_hosts)])])
-        dc_2_osds_to_remove = random.choice([str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[random.choice(dc_2_hosts)])])
+        dc_1_osds_to_remove = [random.choice([str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[random.choice(dc_1_hosts)])])]
+        dc_2_osds_to_remove = [random.choice([str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[random.choice(dc_2_hosts)])])]
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
         log.info(f"{dc_2_name} osds to remove are {dc_2_osds_to_remove}")
@@ -841,7 +841,7 @@ def run(ceph_cluster, **kw):
         dc_1_osds_to_remove, dc_2_osds_to_remove = [], []
         for hostname in dc_1_hosts:
             osd_list = [str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[hostname])]
-            dc_1_osds_to_remove.append(random.choice(osd_list))
+            dc_1_osds_to_remove.append([random.choice(osd_list)])
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
         log.info(f"{dc_2_name} osds to remove are {dc_2_osds_to_remove}")
@@ -854,12 +854,12 @@ def run(ceph_cluster, **kw):
         for hostname in dc_1_hosts:
             osd_list = [str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(
                 hostname_to_cephnode_map[hostname])]
-            dc_1_osds_to_remove.append(random.choice(osd_list))
+            dc_1_osds_to_remove.append([random.choice(osd_list)])
 
         for hostname in dc_2_hosts:
             osd_list = [str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(
                 hostname_to_cephnode_map[hostname])]
-            dc_2_osds_to_remove.append(random.choice(osd_list))
+            dc_2_osds_to_remove.append([random.choice(osd_list)])
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
         log.info(f"{dc_2_name} osds to remove are {dc_2_osds_to_remove}")
