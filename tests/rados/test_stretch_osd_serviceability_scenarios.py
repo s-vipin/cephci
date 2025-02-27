@@ -40,7 +40,7 @@ from tests.rados.test_stretch_site_down import (
     stretch_enabled_checks,
 )
 from utility.log import Log
-from utility.utils import generate_unique_id, method_should_succeed, should_not_be_empty
+from utility.utils import generate_unique_id, method_should_succeed
 
 log = Log(__name__)
 
@@ -123,6 +123,7 @@ def run(ceph_cluster, **kw):
 
         # Collecting the initial number of objects on the pool, before osd removal
         pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
+        log.debug(f"Pool stat before osd removal: {pool_stat}")
         init_objects = pool_stat["stats"]["objects"]
         rados_object_name = f"obj-{generate_unique_id(4)}"
 
@@ -290,11 +291,11 @@ def run(ceph_cluster, **kw):
         time.sleep(20)
 
         pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
-        log.debug(pool_stat)
+        log.debug(f"Pool stat post osd removal: {pool_stat}")
         post_osd_rm_objs = pool_stat["stats"]["objects"]
 
         # Objects should be more than the initial no of objects
-        if post_osd_rm_objs > init_objects:
+        if post_osd_rm_objs >= init_objects:
             log.error(
                 "Write ops should be possible, number of objects in the pool has not changed"
             )
@@ -330,6 +331,7 @@ def run(ceph_cluster, **kw):
         """
 
         pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
+        log.debug(f"Pool stat before osd host removal: {pool_stat}")
         init_objects = pool_stat["stats"]["objects"]
         test_hosts_map = {}
         rados_object_name = f"obj-{generate_unique_id(4)}"
@@ -500,11 +502,11 @@ def run(ceph_cluster, **kw):
         time.sleep(20)
 
         pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
-        log.debug(pool_stat)
+        log.debug(f"Pool stat post osd host removal: {pool_stat}")
         post_osd_rm_objs = pool_stat["stats"]["objects"]
 
         # Objects should be more than the initial no of objects
-        if post_osd_rm_objs > init_objects:
+        if post_osd_rm_objs >= init_objects:
             log.error(
                 "Write ops should be possible, number of objects in the pool has not changed"
             )
@@ -536,11 +538,15 @@ def run(ceph_cluster, **kw):
 
         log.info(f"Collecting {dc_1_name} osds")
         for hostname in dc_1_hosts:
-            dc_1_osds += rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[hostname])
+            dc_1_osds += rados_obj.collect_osd_daemon_ids(
+                hostname_to_cephnode_map[hostname]
+            )
 
         log.info(f"Collecting {dc_2_name} osds")
         for hostname in dc_2_hosts:
-            dc_2_osds += rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[hostname])
+            dc_2_osds += rados_obj.collect_osd_daemon_ids(
+                hostname_to_cephnode_map[hostname]
+            )
 
         log.info(f"{dc_1_name} osds: {dc_1_osds}")
         log.info(f"{dc_2_name} osds: {dc_2_osds}")
@@ -765,7 +771,8 @@ def run(ceph_cluster, **kw):
         #     log.error("Found inactive PGs on the cluster during OSD removal/Addition")
         #     raise Exception("Inactive PGs during stop error")
         #
-        # # Checking if the expected health warning about the different site weights is displayed post removal of OSD host
+        # # Checking if the expected health warning about
+        # the different site weights is displayed post removal of OSD host
         # if float(rhbuild.split("-")[0]) >= 7.1:
         #     if not check_stretch_health_warning():
         #         log.error(
@@ -830,8 +837,26 @@ def run(ceph_cluster, **kw):
             f"Test #1: Remove 1 osd from 1 host in {dc_1_name} and 1 osd from 1 host in {dc_2_name}"
         )
 
-        dc_1_osds_to_remove = [random.choice([str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[random.choice(dc_1_hosts)])])]
-        dc_2_osds_to_remove = [random.choice([str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[random.choice(dc_2_hosts)])])]
+        dc_1_osds_to_remove = [
+            random.choice(
+                [
+                    str(osd_id)
+                    for osd_id in rados_obj.collect_osd_daemon_ids(
+                        hostname_to_cephnode_map[random.choice(dc_1_hosts)]
+                    )
+                ]
+            )
+        ]
+        dc_2_osds_to_remove = [
+            random.choice(
+                [
+                    str(osd_id)
+                    for osd_id in rados_obj.collect_osd_daemon_ids(
+                        hostname_to_cephnode_map[random.choice(dc_2_hosts)]
+                    )
+                ]
+            )
+        ]
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
         log.info(f"{dc_2_name} osds to remove are {dc_2_osds_to_remove}")
@@ -840,7 +865,12 @@ def run(ceph_cluster, **kw):
         log.info(f"Test #2: Remove 1 osd from all host in {dc_1_name}")
         dc_1_osds_to_remove, dc_2_osds_to_remove = [], []
         for hostname in dc_1_hosts:
-            osd_list = [str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(hostname_to_cephnode_map[hostname])]
+            osd_list = [
+                str(osd_id)
+                for osd_id in rados_obj.collect_osd_daemon_ids(
+                    hostname_to_cephnode_map[hostname]
+                )
+            ]
             dc_1_osds_to_remove.append([random.choice(osd_list)])
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
@@ -852,13 +882,21 @@ def run(ceph_cluster, **kw):
         )
         dc_1_osds_to_remove, dc_2_osds_to_remove = [], []
         for hostname in dc_1_hosts:
-            osd_list = [str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(
-                hostname_to_cephnode_map[hostname])]
+            osd_list = [
+                str(osd_id)
+                for osd_id in rados_obj.collect_osd_daemon_ids(
+                    hostname_to_cephnode_map[hostname]
+                )
+            ]
             dc_1_osds_to_remove.append([random.choice(osd_list)])
 
         for hostname in dc_2_hosts:
-            osd_list = [str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(
-                hostname_to_cephnode_map[hostname])]
+            osd_list = [
+                str(osd_id)
+                for osd_id in rados_obj.collect_osd_daemon_ids(
+                    hostname_to_cephnode_map[hostname]
+                )
+            ]
             dc_2_osds_to_remove.append([random.choice(osd_list)])
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
@@ -866,8 +904,12 @@ def run(ceph_cluster, **kw):
         validate_osd_removal_scenario(dc_1_osds_to_remove, dc_2_osds_to_remove)
 
         log.info("Test #4: Remove all osd from 1 host")
-        dc_1_osds_to_remove =  [str(osd_id) for osd_id in rados_obj.collect_osd_daemon_ids(
-            hostname_to_cephnode_map[random.choice(dc_1_hosts)])]
+        dc_1_osds_to_remove = [
+            str(osd_id)
+            for osd_id in rados_obj.collect_osd_daemon_ids(
+                hostname_to_cephnode_map[random.choice(dc_1_hosts)]
+            )
+        ]
         dc_2_osds_to_remove = []
 
         log.info(f"{dc_1_name} osds to remove are {dc_1_osds_to_remove}")
