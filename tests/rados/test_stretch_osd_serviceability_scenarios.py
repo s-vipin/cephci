@@ -295,7 +295,7 @@ def run(ceph_cluster, **kw):
         post_osd_rm_objs = pool_stat["stats"]["objects"]
 
         # Objects should be more than the initial no of objects
-        if post_osd_rm_objs >= init_objects:
+        if post_osd_rm_objs < init_objects:
             log.error(
                 "Write ops should be possible, number of objects in the pool has not changed"
             )
@@ -506,7 +506,7 @@ def run(ceph_cluster, **kw):
         post_osd_rm_objs = pool_stat["stats"]["objects"]
 
         # Objects should be more than the initial no of objects
-        if post_osd_rm_objs >= init_objects:
+        if post_osd_rm_objs < init_objects:
             log.error(
                 "Write ops should be possible, number of objects in the pool has not changed"
             )
