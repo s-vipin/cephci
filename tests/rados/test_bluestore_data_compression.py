@@ -9,14 +9,19 @@ Test #6 Validate data migration between compressed pools
 """
 
 import json
+import re
 import time
 
 from ceph.ceph_admin import CephAdmin
+from ceph.rados import utils
 from ceph.rados.core_workflows import RadosOrchestrator
 from ceph.rados.pool_workflows import PoolFunctions
+from ceph.rados.serviceability_workflows import ServiceabilityMethods
 from tests.rados.monitor_configurations import MonConfigMethods
+from tests.rados.rados_test_util import get_device_path, wait_for_device_rados
+from tests.rados.stretch_cluster import wait_for_clean_pg_sets
 from utility.log import Log
-from utility.utils import generate_unique_id
+from utility.utils import generate_unique_id, method_should_succeed, should_not_be_empty
 
 log = Log(__name__)
 
@@ -36,6 +41,7 @@ def run(ceph_cluster, **kw):
     mon_obj = MonConfigMethods(rados_obj=rados_obj)
     client_node = ceph_cluster.get_nodes(role="client")[0]
     pool_obj = PoolFunctions(node=cephadm)
+    service_obj = ServiceabilityMethods(cluster=ceph_cluster, **config)
 
     def validate_basic_compression_workflow():
         log.info(
@@ -925,6 +931,740 @@ def run(ceph_cluster, **kw):
         if rados_obj.delete_pool(pool=source_erasure_coded_pool) is False:
             raise Exception("Failed to delete pool ", source_erasure_coded_pool)
 
+    def validate_osd_replacement():
+        log.info(
+            "\n ---------------------------------"
+            "\n 1. Create replicated and/or erasure pool/pools"
+            "\n 2. Identify the first osd to be removed"
+            "\n 3. Fetch the host by daemon_type=osd and osd id"
+            "\n 4. Fetch container id and device path"
+            "\n 5. Mark osd out and wait for pgs to be active+clean"
+            "\n 6. Remove OSD"
+            "\n 7. Zap device and wait for device not present"
+            "\n 8. Identify the second osd to be removed"
+            "\n 9. Fetch the host by daemon_type=osd and osd id"
+            "\n 10. Fetch container id and device path"
+            "\n 11. Mark osd out"
+            "\n 12. Add first osd and wait for device present and pgs to be active+clean"
+            "\n ---------------------------------"
+        )
+        pool_name = f"{pool_prefix}-{generate_unique_id(4)}"
+
+        log_info_msg = f"1. Create replicated and/or erasure pool/pools {pool_name}"
+        log.info(log_info_msg)
+        assert rados_obj.create_pool(pool_name=pool_name)
+
+        log_info_msg = f"2. Enable compression on the pool {pool_name}"
+        log.info(log_info_msg)
+        if not rados_obj.pool_inline_compression(
+            pool_name=pool_name,
+            compression_mode="force",
+            compression_algorithm="snappy",
+        ):
+            err_msg = f"Error setting compression on pool : {pool_name}"
+            log.error(err_msg)
+            raise Exception(err_msg)
+
+        log_info_msg = f"3. Write IO to pool {pool_name}"
+        log.info(log_info_msg)
+        if (
+            pool_obj.do_rados_put(
+                client=client_node,
+                pool=pool_name,
+                nobj=10,
+                obj_name=f"{pool_name}-{generate_unique_id(4)}",
+            )
+            == 1
+        ):
+            exception_msg = f"Writing IO to pool {pool_name} failed"
+            raise Exception(exception_msg)
+
+        log_info_msg = (
+            f"4. Collect stats and Check if data is compressed on pool {pool_name}"
+        )
+        log.info(log_info_msg)
+        pool_stats = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        if not data_compressed(pool_stats=pool_stats):
+            err_msg = f"Data in the pool {pool_name} is not compressed after enabling compression"
+            raise Exception(err_msg)
+
+        # Increasing the recovery threads on the cluster
+        log_info_msg = "5. Remove OSD from the cluster"
+        rados_obj.change_recovery_threads(config={}, action="set")
+        target_osd = rados_obj.get_pg_acting_set(pool_name=pool_name)[0]
+        log.debug(
+            f"Ceph osd tree before OSD removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
+        )
+        test_host = rados_obj.fetch_host_node(daemon_type="osd", daemon_id=target_osd)
+        should_not_be_empty(test_host, "Failed to fetch host details")
+        dev_path = get_device_path(test_host, target_osd)
+        log.debug(
+            f"osd device path  : {dev_path}, osd_id : {target_osd}, hostname : {test_host.hostname}"
+        )
+
+        utils.set_osd_devices_unmanaged(ceph_cluster, target_osd, unmanaged=True)
+        method_should_succeed(utils.set_osd_out, ceph_cluster, target_osd)
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        log.debug("Cluster clean post draining of OSD for removal")
+        utils.osd_remove(ceph_cluster, target_osd)
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        method_should_succeed(
+            utils.zap_device, ceph_cluster, test_host.hostname, dev_path
+        )
+        method_should_succeed(
+            wait_for_device_rados, test_host, target_osd, action="remove"
+        )
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        log.info(f"Removal of OSD : {target_osd} is successful.")
+
+        log_info_msg = f"6. Check if data is still compressed on pool {pool_name} \
+            after OSD removal and read data from compressed pool"
+        log.info(log_info_msg)
+
+        log_info_msg = f"Checking if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
+        pool_stats_after_osd_removal = get_pool_stats(
+            rados_obj=rados_obj, pool_name=pool_name
+        )
+
+        # Example:
+        # pool_stats_after_osd_removal {
+        # "bytes_used": 62914560,
+        # "compress_bytes_used": 62914560,
+        # "compress_under_bytes": 125829120,
+        # "data_bytes_used": 62914560,
+        # "stored_raw": 125829120,
+        # }
+
+        # Check if compress_under_bytes and compress_used_bytes != 0
+        if not data_compressed(pool_stats=pool_stats_after_osd_removal):
+            err_msg = "Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+
+        # Check if all the data being written is compressed
+        if not is_deviation_within_allowed_percentage(
+            int(pool_stats_after_osd_removal["stored_raw"]),
+            int(pool_stats_after_osd_removal["compress_under_bytes"]),
+            10,
+        ):
+            raise Exception()
+
+        log_info_msg = f"Reading data from pool {pool_name}"
+        log.info(log_info_msg)
+        if not pool_obj.do_rados_get(pool=pool_name, read_count="all"):
+            raise Exception(f"Reading data from pool {pool_name} failed")
+
+        # write to the pool and check compression
+        log_info_msg = f"6. Write IO to pool {pool_name} after OSD removal"
+        log.info(log_info_msg)
+        obj_name = f"{pool_name}-{generate_unique_id(4)}"
+        if (
+            pool_obj.do_rados_put(
+                client=client_node,
+                pool=pool_name,
+                nobj=10,
+                obj_name=obj_name,
+            )
+            == 1
+        ):
+            exception_msg = f"Writing IO to pool {pool_name} failed"
+            raise Exception(exception_msg)
+
+        log_info_msg = "7. Validate new data written after OSD removal to the pool is still being compressed"
+        pool_stats_after_osd_removal_and_IO = get_pool_stats(
+            rados_obj=rados_obj, pool_name=pool_name
+        )
+        # Check if compress_under_bytes and compress_used_bytes != 0
+        if not data_compressed(pool_stats=pool_stats_after_osd_removal_and_IO):
+            err_msg = "Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+
+        # Check if all the data being written is compressed
+        if not is_deviation_within_allowed_percentage(
+            int(pool_stats_after_osd_removal_and_IO["stored_raw"]),
+            int(pool_stats_after_osd_removal_and_IO["compress_under_bytes"]),
+            10,
+        ):
+            raise Exception()
+
+        # Adding the removed OSD back and checking the cluster status
+        log.debug("8. Adding the removed OSD back and checking the cluster status")
+        utils.add_osd(ceph_cluster, test_host.hostname, dev_path, target_osd)
+        method_should_succeed(
+            wait_for_device_rados, test_host, target_osd, action="add"
+        )
+        time.sleep(30)
+        log.debug(
+            "Completed addition of OSD post removal. Checking for inactive PGs post OSD addition"
+        )
+
+        # Checking cluster health after OSD Addition
+        method_should_succeed(rados_obj.run_pool_sanity_check)
+        log.info(
+            f"Addition of OSD : {target_osd} back into the cluster was successful, and the health is good!"
+        )
+        utils.set_osd_devices_unmanaged(ceph_cluster, target_osd, unmanaged=False)
+        log.info("Completed the removal and addition of OSD daemons")
+
+        log_info_msg = (
+            f"9. Check if data is compressed on pool {pool_name} after OSD addition"
+        )
+        log.info(log_info_msg)
+        pool_stats_after_osd_addition = get_pool_stats(
+            rados_obj=rados_obj, pool_name=pool_name
+        )
+        if not data_compressed(pool_stats=pool_stats_after_osd_addition):
+            err_msg = "Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+
+        log_info_msg = f"Reading data from pool {pool_name}"
+        log.info(log_info_msg)
+        if not pool_obj.do_rados_get(pool=pool_name, read_count="all"):
+            raise Exception(f"Reading data from pool {pool_name} failed")
+
+        # write to the pool and check compression
+        log_info_msg = f"10. Write IO to pool {pool_name} after OSD addition to validate new written data is\
+            compressed after OSD addition"
+        log.info(log_info_msg)
+        if (
+            pool_obj.do_rados_put(
+                client=client_node,
+                pool=pool_name,
+                nobj=10,
+                obj_name=f"{pool_name}-{generate_unique_id(4)}",
+            )
+            == 1
+        ):
+            exception_msg = f"Writing IO to pool {pool_name} failed"
+            raise Exception(exception_msg)
+
+        log_info_msg = "11. Validate new written data is\
+            compressed after OSD addition"
+        log.info(log_info_msg)
+
+        pool_stats_after_osd_addition_and_IO = get_pool_stats(
+            rados_obj=rados_obj, pool_name=pool_name
+        )
+        if not data_compressed(pool_stats_after_osd_addition_and_IO):
+            raise Exception()
+
+        if not is_deviation_within_allowed_percentage(
+            int(pool_stats_after_osd_addition_and_IO["stored_raw"]),
+            int(pool_stats_after_osd_addition_and_IO["compress_under_bytes"]),
+            10,
+        ):
+            raise Exception()
+
+    def validate_osd_host_removal():
+        log.info(
+            "\n ---------------------------------"
+            "\n 1. Creating pools"
+            "\n 2. Create pool with compression enabled"
+            "\n 3. Write IO to pool"
+            "\n 4. Collect stats of pool such as size of data, used compression and under compression"
+            "\n 5. Proceeding to remove host"
+            "\n 6. Collecting pool stats after OSD host removal"
+            "\n 7. Validations for bluestore data compression after OSD host removal"
+            "\n     Checking if data is compressed on pool"
+            "\n     Checking if compression_required_ratio is maintained"
+            "\n     Reading data from pool"
+            "\n 8. Adding the removed OSD host back"
+            "\n 9. Collect stats of pool After adding removed OSD host back"
+            "\n 10. Validations for bluestore data compression post OSD host addition"
+            "\n     Checking if data is compressed on pool"
+            "\n     Checking if data is compressed on pool"
+            "\n     Reading data from pool"
+            "\n ---------------------------------"
+        )
+
+        pool_name = f"{pool_prefix}-{generate_unique_id(4)}"
+
+        log.info("1. Creating pools")
+        log.info(f"Creating Replicated pool {pool_name}")
+        assert rados_obj.create_pool(pool_name=pool_name)
+
+        log.info(f"2. Create pool {pool_name} with compression enabled")
+        if not rados_obj.pool_inline_compression(
+            pool_name=pool_name,
+            compression_mode="force",
+            compression_algorithm="snappy",
+        ):
+            err_msg = f"Error disabling compression on pool : {pool_name}"
+            log.error(err_msg)
+            raise Exception(err_msg)
+
+        log_info_msg = f"3. Write IO to pool {pool_name}"
+        log.info(log_info_msg)
+        if (
+            pool_obj.do_rados_put(
+                client=client_node,
+                pool=pool_name,
+                nobj=10,
+                obj_name=f"{pool_name}-{generate_unique_id(4)}",
+            )
+            == 1
+        ):
+            exception_msg = f"Writing IO to pool {pool_name} failed"
+            raise Exception(exception_msg)
+
+        log.info(
+            f"4. Collect stats of pool {pool_name} such as size of data, used compression and under compression"
+        )
+        pool_stats = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        log.info("Pool stats of the pool:")
+        log.info(pool_stats)
+
+        log.info("5. Proceeding to remove OSD host")
+        pg_set = rados_obj.get_pg_acting_set(pool_name=pool_name)
+        target_osd = pg_set[0]
+        test_host = rados_obj.fetch_host_node(daemon_type="osd", daemon_id=target_osd)
+        hostname = test_host.hostname
+        log_info_msg = f"Removing host {hostname}"
+        log.info(log_info_msg)
+        try:
+            service_obj.remove_custom_host(host_node_name=hostname)
+        except Exception as err:
+            log.error(f"Could not remove host : {hostname}. Error : {err}")
+            raise Exception("Host not removed error")
+        time.sleep(10)
+
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        method_should_succeed(rados_obj.run_pool_sanity_check)
+        log.debug(
+            f"Ceph osd tree after host removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
+        )
+
+        # Data existed before osd host removal should be compressed after host removal
+        log_info_msg = f"6. Collecting pool stats after OSD host removal {pool_name}"
+        log.info(log_info_msg)
+        pool_stats_after_osd_host_removal = get_pool_stats(
+            rados_obj=rados_obj, pool_name=pool_name
+        )
+
+        log.info("7. Validations for bluestore data compression after OSD host removal")
+        log_info_msg = f"Checking if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
+
+        log_info_msg = f"Checking if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
+        if not data_compressed(pool_stats=pool_stats_after_osd_host_removal):
+            err_msg = "Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+
+        log_info_msg = (
+            f"Checking if compression_required_ratio is maintained {pool_name}"
+        )
+        log.info(log_info_msg)
+        compression_required_ratio = get_default_bluestore_compression_required_ratio(
+            rados_obj=rados_obj, mon_obj=mon_obj, pool_name=pool_name
+        )
+        if not compression_ratio_maintained(
+            pool_stats=pool_stats_after_osd_host_removal,
+            compression_required_ratio=compression_required_ratio,
+        ):
+            err_msg = "compression_required_ratio is not maintained"
+            raise Exception(err_msg)
+
+        log_info_msg = f"Reading data from pool {pool_name}"
+        log.info(log_info_msg)
+        if not pool_obj.do_rados_get(pool=pool_name, read_count="all"):
+            raise Exception(f"Reading data from pool {pool_name} failed")
+
+        log_info_msg = f"8. Adding the removed OSD host back {hostname}"
+        log.info(log_info_msg)
+        try:
+            service_obj.add_new_hosts(
+                add_nodes=[hostname],
+            )
+        except Exception as err:
+            log.error(
+                f"Could not add host : {hostname} into the cluster and deploy OSDs. Error : {err}"
+            )
+            raise Exception("Host not added error")
+        time.sleep(60)
+
+        log_info_msg = (
+            f"9. Collect stats of pool {pool_name} After adding removed OSD host back"
+        )
+        log.info(log_info_msg)
+        pool_stats_after_osd_host_addition = get_pool_stats(
+            rados_obj=rados_obj, pool_name=pool_name
+        )
+
+        log.info(
+            "10. Validations for bluestore data compression post OSD host addition"
+        )
+        log_info_msg = f"Checking if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
+
+        log_info_msg = f"Checking if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
+        if not data_compressed(pool_stats=pool_stats_after_osd_host_addition):
+            err_msg = "Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+
+        log_info_msg = (
+            f"Checking if compression_required_ratio is maintained {pool_name}"
+        )
+        log.info(log_info_msg)
+        compression_required_ratio = get_default_bluestore_compression_required_ratio(
+            rados_obj=rados_obj, mon_obj=mon_obj, pool_name=pool_name
+        )
+        if not compression_ratio_maintained(
+            pool_stats=pool_stats_after_osd_host_addition,
+            compression_required_ratio=compression_required_ratio,
+        ):
+            err_msg = "compression_required_ratio is not maintained"
+            raise Exception(err_msg)
+
+    def validate_compression_configurations(**kwargs):
+        """
+        Validates compression configurations for pools or OSD. This function is used to
+        validate compression configs such as compression_required_ratio, and compression_min_blob_size.
+
+        Steps:
+        1. Create pools to test the compression configurations.
+        2. Enable compression either at the pool level or OSD level.
+        3. Perform IO operations (e.g., write operations) to the pool.
+        4. Validate the compression configurations:
+            - `compression_required_ratio`
+            - `compression_min_blob_size`
+
+        Parameters:
+            kwargs (dict): dictionary of optional configurations.
+            Expected keys include:
+                - "compression_level" (str, optional): The level at which to apply compression,
+                either "pool" or "osd". Defaults to "pool".
+                - "pool_configuration" (dict): dictionary containing pool compression settings.
+                Expected keys:
+                    - "compression_mode" (str): compression mode. exmaple: force, aggressive .
+                    - "compression_algorithm" (str): compression algorithm to set. example: snappy.
+                    - "compression_required_ratios_to_test" (list): List of required compression ratios to test.
+                    - "compression_min_blob_size_to_test" (list): List of min blob size to test.
+                - "osd_configuration" (dict) : dictionary containing OSD compression settings.
+                Expected keys:
+                    - "bluestore_compression_mode" (str): OSD configuration.
+                    - "bluestore_compression_algorithm" (str): OSD configuration.
+                    - "bluestore_compression_required_ratios_to_test" (list): List of ratios to test.
+                    - "bluestore_compression_min_blob_size_to_test" (list): List of min blob size to test.
+
+        Returns:
+            None: This function does not return any value but will raise exceptions if configurations are invalid.
+
+        Example:
+            validate_compression_configurations(
+                compression_level="osd",
+                osd_configuration={
+                    "bluestore_compression_mode": "lz4",
+                    "bluestore_compression_algorithm": "lz4",
+                    "bluestore_compression_required_ratios_to_test": [0.5, 0.75]
+                }
+            )
+        """
+        compression_level = kwargs.get("compression_level", "pool")
+
+        number_of_pools = 0
+        pool_configuration = kwargs.get("pool_configuration", None)
+        osd_configuration = kwargs.get("osd_configuration", None)
+        if pool_configuration is not None:
+            compression_mode = pool_configuration.get("compression_mode", None)
+            compression_algorithm = pool_configuration.get(
+                "compression_algorithm", None
+            )
+            compression_required_ratios_to_test = pool_configuration.get(
+                "compression_required_ratios_to_test", None
+            )
+            compression_min_blob_size_to_test = pool_configuration.get(
+                "compression_min_blob_size_to_test", None
+            )
+
+        elif osd_configuration is not None:
+            compression_mode = osd_configuration.get("bluestore_compression_mode", None)
+            compression_algorithm = osd_configuration.get(
+                "bluestore_compression_algorithm", None
+            )
+            compression_required_ratios_to_test = osd_configuration.get(
+                "bluestore_compression_required_ratios_to_test", None
+            )
+            compression_min_blob_size_to_test = osd_configuration.get(
+                "bluestore_compression_min_blob_size_to_test", None
+            )
+
+        else:
+            raise Exception("Provide 1) pool_configuration or 2) osd_configuration")
+
+        if (
+            compression_required_ratios_to_test is not None
+            and len(compression_required_ratios_to_test) != 0
+        ):
+            number_of_pools = len(compression_required_ratios_to_test)
+
+        if (
+            compression_min_blob_size_to_test is not None
+            and len(compression_min_blob_size_to_test) != 0
+        ):
+            number_of_pools = len(compression_min_blob_size_to_test)
+
+        object_size = kwargs.get("object_size", "50M")
+        pool_details = list()
+
+        if number_of_pools == 0:
+            raise Exception(
+                "Provide 1)compression_required_ratios_to_test or 2)compression_min_blob_size_to_test "
+            )
+
+        for i in range(number_of_pools):
+            log.info("1. Test Create pools to test bluestore data compression")
+            pool_name = f"{pool_prefix}-{generate_unique_id(4)}"
+            log_info_msg = f"Creating pool {pool_name}"
+            log.info(log_info_msg)
+            pool_detail = dict()
+            pool_detail["name"] = pool_name
+            if (
+                compression_required_ratios_to_test is not None
+                and len(compression_required_ratios_to_test) > 0
+            ):
+                pool_detail["compression_required_ratio"] = (
+                    compression_required_ratios_to_test[i]
+                )
+            else:
+                pool_detail["compression_required_ratio"] = None
+
+            if (
+                compression_min_blob_size_to_test is not None
+                and len(compression_min_blob_size_to_test) > 0
+            ):
+                pool_detail["compression_min_blob_size"] = (
+                    compression_min_blob_size_to_test[i]
+                )
+            else:
+                pool_detail["compression_min_blob_size"] = None
+
+            assert rados_obj.create_pool(pool_name=pool_name)
+            pool_details.append(pool_detail)
+
+            pool_name = pool_detail["name"]
+            compression_required_ratio = pool_detail["compression_required_ratio"]
+            compression_min_blob_size = pool_detail["compression_min_blob_size"]
+
+            if compression_level == "pool":
+                log_info_msg = f"Enabling compression on pool {pool_name} \
+                compression_mode: {compression_mode} \
+                compression_algorithm: {compression_algorithm} \
+                compression_required_ratio: {compression_required_ratio} \
+                compression_min_blob_size: {compression_min_blob_size}"
+                log.info(log_info_msg)
+
+                if (
+                    compression_required_ratio is not None
+                    and rados_obj.pool_inline_compression(
+                        pool_name=pool_name,
+                        compression_mode=compression_mode,
+                        compression_algorithm=compression_algorithm,
+                        compression_required_ratio=compression_required_ratio,
+                    )
+                    is False
+                ):
+                    err_msg = f"Error enabling compression on pool : {pool_name}"
+                    log.error(err_msg)
+                    raise Exception(err_msg)
+
+                if (
+                    compression_min_blob_size is not None
+                    and rados_obj.pool_inline_compression(
+                        pool_name=pool_name,
+                        compression_mode=compression_mode,
+                        compression_algorithm=compression_algorithm,
+                        compression_min_blob_size=compression_min_blob_size,
+                    )
+                    is False
+                ):
+                    err_msg = f"Error enabling compression on pool : {pool_name}"
+                    log.error(err_msg)
+                    raise Exception(err_msg)
+            else:
+                log.info("Selecting OSD level compression configuration by default")
+                mon_obj.set_config(
+                    section="osd",
+                    name="bluestore_compression_algorithm",
+                    value=compression_algorithm,
+                )
+                mon_obj.set_config(
+                    section="osd",
+                    name="bluestore_compression_mode",
+                    value=compression_mode,
+                )
+
+                if compression_required_ratio is not None:
+                    mon_obj.set_config(
+                        section="osd",
+                        name="bluestore_compression_required_ratio",
+                        value=compression_required_ratio,
+                    )
+
+                if compression_min_blob_size is not None:
+                    mon_obj.set_config(
+                        section="osd",
+                        name="bluestore_compression_min_blob_size",
+                        value=compression_min_blob_size,
+                    )
+                    mon_obj.set_config(
+                        section="osd",
+                        name="bluestore_compression_min_blob_size_hdd",
+                        value=compression_min_blob_size,
+                    )
+                    mon_obj.set_config(
+                        section="osd",
+                        name="bluestore_compression_min_blob_size_ssd",
+                        value=compression_min_blob_size,
+                    )
+
+            log_info_msg = "2. Write IO to the pool"
+            log.info(log_info_msg)
+            pool_name = pool_detail["name"]
+
+            if (
+                compression_min_blob_size_to_test is not None
+                and len(compression_min_blob_size_to_test) > 0
+            ):
+                log.info("object size is ", object_size)
+                compression_min_blob_size = pool_detail["compression_min_blob_size"]
+                object_size = re.split(r"[a-zA-Z]", compression_min_blob_size)[0]
+                data_type = compression_min_blob_size.split(object_size)[1]
+                log.info("object size is ", object_size)
+                object_size = str(int(object_size) // 2) + data_type
+
+            log_info_msg = f"Writing object of size {object_size}"
+            if not rados_obj.bench_write(
+                pool_name=pool_name,
+                max_objs=1,
+                byte_size=object_size,
+                num_threads=1,
+                type=type,
+                verify_stats=False,
+            ):
+                err_msg = f"Write IO failed on pool {pool_name}"
+                raise Exception(err_msg)
+
+            log_info_msg = "3. Perform validations for bluestore data compression"
+            log.info(log_info_msg)
+            pool_name = pool_detail["name"]
+            log_info_msg = f"Performing validations for pool {pool_name}"
+
+            compression_required_ratio = pool_detail["compression_required_ratio"]
+            compression_min_blob_size = pool_detail["compression_min_blob_size"]
+
+            log.info("1) Validate compression is configured on pool")
+            if compression_level == "pool":
+                validate_compression_configuration_on_pools(
+                    rados_obj,
+                    pool_name,
+                    pool_configuration={
+                        "compression_required_ratio": compression_required_ratio,
+                        "compression_mode": compression_mode,
+                        "compression_algorithm": compression_algorithm,
+                        "compression_min_blob_size": compression_min_blob_size,
+                    },
+                )
+            else:
+                validate_compression_configuration_on_osds(
+                    rados_obj=rados_obj,
+                    mon_obj=mon_obj,
+                    pool_name=pool_name,
+                    osd_configuration={
+                        "bluestore_compression_required_ratio": compression_required_ratio,
+                        "bluestore_compression_mode": compression_mode,
+                        "bluestore_compression_algorithm": compression_algorithm,
+                        "bluestore_compression_min_blob_size": compression_min_blob_size,
+                        "bluestore_compression_min_blob_size_ssd": compression_min_blob_size,
+                        "bluestore_compression_min_blob_size_hdd": compression_min_blob_size,
+                    },
+                )
+
+            if compression_required_ratio is not None:
+                log.info(
+                    "Validating if compressed data < original data * compression_required_ratio"
+                )
+                pool_stats = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+
+                original_size = pool_stats["stored_data"]
+                compressed_data = pool_stats["compress_bytes_used"]
+                log_info_msg = f"""
+\n Compressed data size = {compressed_data} \
+\n Original data size = {original_size} \
+\n compression_required_ratio = {compression_required_ratio} \
+\n Original size * compression_required_ratio = {original_size * compression_required_ratio}\
+\n compressed_size < original size * compression_required_ratio \
+\n {compressed_data} < {original_size * compression_required_ratio}
+\n Data should be compressed only if compressed_size < original size * compression_required_ratio.\
+"""
+                log.info(log_info_msg)
+                if not (compressed_data < original_size * compression_required_ratio):
+                    log.debug(
+                        "Compression should take place only when"
+                        "compressed size < original size * compression_required_ratio"
+                    )
+                    # raise Exception(log_info_msg)
+
+            if compression_min_blob_size is not None:
+                log.info(
+                    "Validating data smaller than compression_min_blob_size undergoes compression"
+                )
+                pool_stats = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+
+                original_size = pool_stats["stored_data"]
+                compressed_data = pool_stats["compress_bytes_used"]
+                log_info_msg = f"""
+\n Compressed data size = {compressed_data}
+\n Original data size = {original_size}
+\n compression_min_blob_size = {compression_min_blob_size}
+\n object size < compression_min_blob_size should not be compressedd
+\n {object_size} < {compression_min_blob_size}
+"""
+                log.info(log_info_msg)
+
+                if data_compressed(pool_stats=pool_stats):
+                    log.info(
+                        "Data smaller than compression_min_blob_size should not be compressed"
+                    )
+                    # raise Exception(
+                    #     "Data should not not compress since object is less than compression_min_blob_size")
+
+                mon_obj.set_config(
+                    section="osd",
+                    name="bluestore_compression_algorithm",
+                    value=compression_algorithm,
+                )
+                mon_obj.set_config(
+                    section="osd",
+                    name="bluestore_compression_mode",
+                    value=compression_mode,
+                )
+
+                if compression_required_ratio is not None:
+                    mon_obj.set_config(
+                        section="osd",
+                        name="bluestore_compression_required_ratio",
+                        value=compression_required_ratio,
+                    )
+
+                if compression_min_blob_size is not None:
+                    mon_obj.set_config(
+                        section="osd",
+                        name="bluestore_compression_min_blob_size",
+                        value=compression_min_blob_size,
+                    )
+                    mon_obj.set_config(
+                        section="osd",
+                        name="bluestore_compression_min_blob_size_hdd",
+                        value=compression_min_blob_size,
+                    )
+                    mon_obj.set_config(
+                        section="osd",
+                        name="bluestore_compression_min_blob_size_ssd",
+                        value=compression_min_blob_size,
+                    )
+
     try:
 
         log.info(
@@ -953,6 +1693,59 @@ def run(ceph_cluster, **kw):
 
         log.info("Test #6 Validate data migration between compressed pools")
         validate_data_migration_between_pools()
+
+        log.info("Test #7 Validate OSD replacement scenario")
+        validate_osd_replacement()
+
+        log.info("Test #8 Validate OSD host replacement scenario")
+        validate_osd_host_removal()
+
+        validate_compression_configurations(
+            compression_level="pool",
+            pool_configuration={
+                "compression_mode": "force",
+                "compression_algorithm": "snappy",
+                "compression_required_ratios_to_test": [0.01, 0.05, 0.95, 0.99, 1],
+                "object_size": "50MiB",
+            },
+        )
+
+        log.info("Test #10 Validate compression_min_blob_size at pool level")
+        validate_compression_configurations(
+            compression_level="pool",
+            pool_configuration={
+                "compression_mode": "force",
+                "compression_algorithm": "snappy",
+                "compression_min_blob_size_to_test": ["4KB", "8KB", "50KB"],
+                "object_size": "50MB",
+            },
+        )
+
+        log.info("Test #11 Validate compression_required_ratio at OSD level")
+        validate_compression_configurations(
+            osd_configuration={
+                "bluestore_compression_mode": "force",
+                "bluestore_compression_algorithm": "snappy",
+                "bluestore_compression_required_ratios_to_test": [
+                    0.01,
+                    0.05,
+                    0.95,
+                    0.99,
+                    1,
+                ],
+            },
+            compression_level="osd",
+        )
+
+        log.info("Test #12 Validate compression_min_blob_size at OSD level")
+        validate_compression_configurations(
+            osd_configuration={
+                "bluestore_compression_mode": "force",
+                "bluestore_compression_algorithm": "snappy",
+                "bluestore_compression_min_blob_size_to_test": ["4KB", "8KB", "50KB"],
+            },
+            compression_level="osd",
+        )
 
     except Exception as e:
         log.error(f"Failed with exception: {e.__doc__}")
@@ -1123,7 +1916,7 @@ def data_compressed(pool_stats) -> bool:
 
 
 def compression_ratio_maintained(
-    pool_stats, bluestore_compression_required_ratio
+    pool_stats, bluestore_compression_required_ratio="0.875"
 ) -> bool:
     """
     Checks if compression_required_ratio maintained
@@ -1178,3 +1971,191 @@ def validate_compress_success_rejected_count(
         log.error(log_err_msg)
         return False
     return True
+
+
+def validate_compression_configuration_on_pools(rados_obj, pool_name, **kwargs):
+    """
+    Validates the compression configuration for a given pool. This function checks whether
+    the specified compression settings (such as compression ratio,
+    compression mode, compression algorithm, and minimum blob size) mathc th
+
+    Parameters:
+        rados_obj (object): The RADOS object that provides access to Ceph cluster operations.
+        pool_name (str): The name of the pool to validate.
+        **kwargs (dict): Additional configuration parameters. Expected keys in kwargs:
+            - "pool_configuration": dictionary
+                - "compression_required_ratio" (float): required compression ratio. Example: 0.7
+                - "compression_mode" (str): compression mode. Example: force
+                - "compression_algorithm" (str): compression algorithm. Example: snappy
+                - "compression_min_blob_size" (str): minimum blob size for compression. Example: 4KB
+
+    Raises:
+        Exception: If any of pool's compression configuration settings do not match
+                   the specified configuration.
+
+    Example:
+        validate_compression_configuration_on_pools(rados_obj, "mypool", pool_configuration={
+            "compression_required_ratio": 1.5,
+            "compression_mode": "lz4",
+            "compression_algorithm": "lz4",
+            "compression_min_blob_size": "4KB"
+        })
+    """
+    compression_required_ratio = kwargs.get("pool_configuration")[
+        "compression_required_ratio"
+    ]
+    compression_mode = kwargs.get("pool_configuration")["compression_mode"]
+    compression_algorithm = kwargs.get("pool_configuration")["compression_algorithm"]
+    compression_min_blob_size = kwargs.get("pool_configuration")[
+        "compression_min_blob_size"
+    ]
+
+    if compression_min_blob_size == "0B":
+        compression_min_blob_size = None
+
+    pool_details = rados_obj.get_pool_details(pool_name)
+    log.info(f"Pool details for {pool_name} : \n {json.dumps(pool_details, indent=4)}")
+
+    if len(pool_details["options"]) == 0:
+        raise Exception()
+
+    if (
+        compression_algorithm is not None
+        and pool_details["options"]["compression_algorithm"] != compression_algorithm
+    ):
+        err_msg = f"compression_algorithm value is not as expected \
+            current value: {pool_details['options']['compression_algorithm']}\
+            expected value: {compression_algorithm}"
+        raise Exception(err_msg)
+    if (
+        compression_mode is not None
+        and pool_details["options"]["compression_mode"] != compression_mode
+    ):
+        err_msg = f"compression_algorithm value is not as expected \
+            current value: {pool_details['options']['compression_mode']}\
+            expected value: {compression_algorithm}"
+        raise Exception(err_msg)
+    if (
+        compression_required_ratio is not None
+        and pool_details["options"]["compression_required_ratio"]
+        != compression_required_ratio
+    ):
+        err_msg = f"compression_algorithm value is not as expected \
+            current value: {pool_details['options']['compression_required_ratio']}\
+            expected value: {compression_algorithm}"
+        raise Exception(err_msg)
+    if (
+        compression_min_blob_size is None
+        and pool_details["options"]["compression_min_blob_size"]
+        != compression_min_blob_size
+    ):
+        err_msg = f"compression_algorithm value is not as expected \
+            current value: {pool_details['options']['compression_min_blob_size']}\
+            expected value: {compression_algorithm}"
+        raise Exception(err_msg)
+
+
+def validate_compression_configuration_on_osds(rados_obj, mon_obj, pool_name, **kwargs):
+    """
+    Validates the compression configurations are set as OSD config. Function uses
+    `ceph daemon osd.x config show` command to retrieve compression related information
+
+    Args:
+        rados_obj (RadosOrchestrator): RadosOrchestrator
+        mon_obj (object): MonConfigMethods object
+        pool_name (str): Name of the pool
+        **kwargs: keyword arguments.
+
+    Raises:
+        Exception: If any of compression configuration do not match the OSD config.
+
+    Example:
+        validate_compression_configuration_on_osds(
+            rados_obj,
+            mon_obj,
+            pool_name="mypool",
+            osd_configuration={
+                "bluestore_compression_required_ratio": 0.7,
+                "bluestore_compression_mode": "lz4",
+                "bluestore_compression_algorithm": "lz4",
+                "bluestore_compression_min_blob_size": 1024,
+            }
+        )
+    """
+    bluestore_compression_required_ratio = kwargs.get("osd_configuration", None)[
+        "bluestore_compression_required_ratio"
+    ]
+    bluestore_compression_mode = kwargs.get("osd_configuration", None)[
+        "bluestore_compression_mode"
+    ]
+    bluestore_compression_algorithm = kwargs.get("osd_configuration", None)[
+        "bluestore_compression_algorithm"
+    ]
+    bluestore_compression_min_blob_size = kwargs.get("osd_configuration", None)[
+        "bluestore_compression_min_blob_size"
+    ]
+
+    pg_set = rados_obj.get_pg_acting_set(pool_name=pool_name)
+    target_osd = pg_set[0]
+    config_show = mon_obj.daemon_config_show(daemon_type="osd", daemon_id=target_osd)
+
+    if bluestore_compression_min_blob_size is not None:
+        bluestore_compression_min_blob_size = convert_to_numeric_size(
+            bluestore_compression_min_blob_size
+        )
+
+    if (
+        bluestore_compression_algorithm is not None
+        and config_show["bluestore_compression_algorithm"]
+        != bluestore_compression_algorithm
+    ):
+        err_msg = f"bluestore_compression_algorithm is not as expected \
+        current value: {bluestore_compression_algorithm} \
+        exepected value: {bluestore_compression_algorithm}"
+        raise Exception(err_msg)
+
+    if bluestore_compression_required_ratio is not None and float(
+        config_show["bluestore_compression_required_ratio"]
+    ) != float(bluestore_compression_required_ratio):
+        err_msg = f"bluestore_compression_algorithm is not as expected \
+        current value: {config_show['bluestore_compression_required_ratio']} \
+        exepected value: {bluestore_compression_algorithm}"
+        raise Exception(err_msg)
+
+    if (
+        bluestore_compression_mode is not None
+        and config_show["bluestore_compression_mode"] != bluestore_compression_mode
+    ):
+        err_msg = f"bluestore_compression_algorithm is not as expected \
+        current value: {config_show['bluestore_compression_mode']} \
+        exepected value: {bluestore_compression_algorithm}"
+        raise Exception(err_msg)
+
+
+def convert_to_numeric_size(data_size):
+    """
+    Converts a string representation of a data size to numeric value in bytes.
+
+    Parameters:
+        data_size (str): string of the size(e.g., '4KB', '10MB').
+
+    Returns:
+        int: numeric value of size in bytes.
+
+    Example:
+        convert_to_numeric_size("4KB") => 4096
+        convert_to_numeric_size("2MB") => 2097152
+    """
+    object_size = re.split(r"[a-zA-Z]", data_size)[0]
+    data_type = data_size.split(object_size)[1].upper()
+
+    log.info("object size is ")
+    log.info(object_size)
+    log.info("data type is ")
+    log.info(data_type)
+
+    if data_type == "KB":
+        object_size = object_size * 1024
+    elif data_type == "MB":
+        object_size = object_size * 1024 * 1024
+    return object_size
