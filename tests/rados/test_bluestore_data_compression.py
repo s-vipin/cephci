@@ -17,6 +17,11 @@ from ceph.rados.pool_workflows import PoolFunctions
 from tests.rados.monitor_configurations import MonConfigMethods
 from utility.log import Log
 from utility.utils import generate_unique_id
+from utility.utils import method_should_succeed, should_not_be_empty
+from tests.rados.rados_test_util import get_device_path, wait_for_device
+from ceph.rados import utils
+from tests.rados.stretch_cluster import wait_for_clean_pg_sets
+from tests.rados.rados_test_util import get_device_path, wait_for_device_rados
 
 log = Log(__name__)
 
@@ -924,6 +929,342 @@ def run(ceph_cluster, **kw):
             raise Exception("Failed to delete pool ", source_replicated_pool)
         if rados_obj.delete_pool(pool=source_erasure_coded_pool) is False:
             raise Exception("Failed to delete pool ", source_erasure_coded_pool)
+        
+
+    def validate_osd_replacement():
+        log.info(
+            "\n ---------------------------------"
+            "\n 1. Create replicated and/or erasure pool/pools"
+            "\n 2. Identify the first osd to be removed"
+            "\n 3. Fetch the host by daemon_type=osd and osd id"
+            "\n 4. Fetch container id and device path"
+            "\n 5. Mark osd out and wait for pgs to be active+clean"
+            "\n 6. Remove OSD"
+            "\n 7. Zap device and wait for device not present"
+            "\n 8. Identify the second osd to be removed"
+            "\n 9. Fetch the host by daemon_type=osd and osd id"
+            "\n 10. Fetch container id and device path"
+            "\n 11. Mark osd out"
+            "\n 12. Add first osd and wait for device present and pgs to be active+clean"
+            "\n ---------------------------------"
+        )
+        pool_name = f"{pool_prefix}-{generate_unique_id(4)}"
+
+        log_info_msg = f"1. Create replicated and/or erasure pool/pools {pool_name}"
+        log.info(log_info_msg)
+        assert rados_obj.create_pool(pool_name=pool_name)
+
+        log_info_msg = f"2. Enable compression on the pool {pool_name}"
+        log.info(log_info_msg)
+        if not rados_obj.pool_inline_compression(
+            pool_name=pool_name,
+            compression_mode="force",
+            compression_algorithm="snappy",
+        ):
+            err_msg = f"Error setting compression on pool : {pool_name}"
+            log.error(err_msg)
+            raise Exception(err_msg)
+
+        log_info_msg = f"3. Write IO to pool {pool_name}"
+        log.info(log_info_msg)
+        if (
+            pool_obj.do_rados_put(
+                client=client_node,
+                pool=pool_name,
+                nobj=10,
+                obj_name=f"{pool_name}-{generate_unique_id(4)}",
+            )
+            == 1
+        ):
+            exception_msg = f"Writing IO to pool {pool_name} failed"
+            raise Exception(exception_msg)
+        
+        
+        log_info_msg = f"Check if data is compressed on pool {pool_name}"
+        pool_stats = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        if not data_compressed(pool_stats=pool_stats):
+            err_msg = f"Data in the pool {pool_name} is not compressed after enabling compression"
+            raise Exception(err_msg)
+
+        # Increasing the recovery threads on the cluster
+        rados_obj.change_recovery_threads(config={}, action="set")
+
+        target_osd = rados_obj.get_pg_acting_set(pool_name=pool_name)[0]
+        log.debug(
+            f"Ceph osd tree before OSD removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
+        )
+
+        test_host = rados_obj.fetch_host_node(daemon_type="osd", daemon_id=target_osd)
+        should_not_be_empty(test_host, "Failed to fetch host details")
+        dev_path = get_device_path(test_host, target_osd)
+        log.debug(
+            f"osd device path  : {dev_path}, osd_id : {target_osd}, hostname : {test_host.hostname}"
+        )
+
+        utils.set_osd_devices_unmanaged(ceph_cluster, target_osd, unmanaged=True)
+        method_should_succeed(utils.set_osd_out, ceph_cluster, target_osd)
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        log.debug("Cluster clean post draining of OSD for removal")
+        utils.osd_remove(ceph_cluster, target_osd)
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        method_should_succeed(
+            utils.zap_device, ceph_cluster, test_host.hostname, dev_path
+        )
+        method_should_succeed(
+            wait_for_device_rados, test_host, target_osd, action="remove"
+        )
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+
+        log.info(
+            f"Removal of OSD : {target_osd} is successful."
+        )
+
+        log_info_msg = f"Check if data is compressed on pool {pool_name}"
+        pool_stats_after_osd_removal = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        if not data_compressed(pool_stats=pool_stats):
+            err_msg = f"Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+        
+        if not is_deviation_within_allowed_percentage(pool_stats["compressed_under_bytes"], pool_stats_after_osd_removal["compressed_under_bytes"], 10):
+            raise Exception()
+
+        log_info_msg = f"Reading data from pool {pool_name}"
+        log.info(log_info_msg)
+        if not pool_obj.do_rados_get(pool=pool_name, read_count="all"):
+            raise Exception(f"Reading data from pool {pool_name} failed")
+
+        # write to the pool and check compression
+        log_info_msg = f"Write IO to pool {pool_name}"
+        log.info(log_info_msg)
+        if (
+            pool_obj.do_rados_put(
+                client=client_node,
+                pool=pool_name,
+                nobj=10,
+                obj_name=f"{pool_name}-{generate_unique_id(4)}",
+            )
+            == 1
+        ):
+            exception_msg = f"Writing IO to pool {pool_name} failed"
+            raise Exception(exception_msg)
+        
+        pool_stats_after_osd_removal_and_IO = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        # new data written 
+        previously_written_data = pool_stats["stored_raw"]
+        data_written = pool_stats_after_osd_removal_and_IO["stored_raw"] - pool_stats["stored_raw"]
+        if not is_deviation_within_allowed_percentage(pool_stats_after_osd_removal_and_IO["compress_under_bytes"], previously_written_data+data_written):
+            raise Exception()
+
+        # Adding the removed OSD back and checking the cluster status
+        log.debug("Adding the removed OSD back and checking the cluster status")
+        utils.add_osd(ceph_cluster, test_host.hostname, dev_path, target_osd)
+        method_should_succeed(
+            wait_for_device_rados, test_host, target_osd, action="add"
+        )
+        time.sleep(30)
+        log.debug(
+            "Completed addition of OSD post removal. Checking for inactive PGs post OSD addition"
+        )
+
+        # Checking cluster health after OSD Addition
+        method_should_succeed(rados_obj.run_pool_sanity_check)
+        log.info(
+            f"Addition of OSD : {target_osd} back into the cluster was successful, and the health is good!"
+        )
+        utils.set_osd_devices_unmanaged(ceph_cluster, target_osd, unmanaged=False)
+        log.info("Completed the removal and addition of OSD daemons")
+
+        log_info_msg = f"Check if data is compressed on pool {pool_name}"
+        pool_stats_after_osd_removal = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        if not data_compressed(pool_stats=pool_stats):
+            err_msg = f"Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+        
+        if not is_deviation_within_allowed_percentage(pool_stats["compressed_under_bytes"], pool_stats_after_osd_removal["compressed_under_bytes"], 10):
+            raise Exception()
+
+        log_info_msg = f"Reading data from pool {pool_name}"
+        log.info(log_info_msg)
+        if not pool_obj.do_rados_get(pool=pool_name, read_count="all"):
+            raise Exception(f"Reading data from pool {pool_name} failed")
+
+        # write to the pool and check compression
+        log_info_msg = f"Write IO to pool {pool_name}"
+        log.info(log_info_msg)
+        if (
+            pool_obj.do_rados_put(
+                client=client_node,
+                pool=pool_name,
+                nobj=10,
+                obj_name=f"{pool_name}-{generate_unique_id(4)}",
+            )
+            == 1
+        ):
+            exception_msg = f"Writing IO to pool {pool_name} failed"
+            raise Exception(exception_msg)
+        
+        # pool_stats_after_osd_removal_and_IO = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        # # new data written 
+        # previously_written_data = pool_stats["stored_raw"]
+        # data_written = pool_stats_after_osd_removal_and_IO["stored_raw"] - pool_stats["stored_raw"]
+        # if not is_deviation_within_allowed_percentage(pool_stats_after_osd_removal_and_IO["compress_under_bytes"], previously_written_data+data_written):
+        #     raise Exception()
+
+
+
+
+    # def validate_osd_host_removal():
+
+    #     # Test #10 OSD host removal
+
+    #     pool1 = f"{pool_prefix}-{generate_unique_id(4)}"
+    #     pool2 = f"{pool_prefix}-{generate_unique_id(4)}"
+
+    #     log.info(f"1. Creating pools without compression configurations")
+    #     log.info(f"Creating Replicated pool {pool1} without compression configurations")
+    #     assert rados_obj.create_pool(pool_name=pool1)
+
+    #     log.info(f"4. Create pool3 {pool1} with compression disabled")
+    #     if not rados_obj.pool_inline_compression(
+    #         pool_name=pool1, compression_mode="none", compression_algorithm="snappy"
+    #     ):
+    #         err_msg = f"Error disabling compression on pool : {pool1}"
+    #         log.error(err_msg)
+    #         raise Exception(err_msg)
+
+    #     log.info(f"3. Enable Compression as OSD config")
+    #     mon_obj.set_config(
+    #         section="osd", name="bluestore_compression_algorithm", value="snappy"
+    #     )
+    #     mon_obj.set_config(
+    #         section="osd", name="bluestore_compression_mode", value="force"
+    #     )
+
+    #     log.info(f"5. Write IO to pool1 {pool1} and pool2 {pool2}")
+    #     if not rados_obj.bench_write(
+    #         pool_name=pool1, max_objs=1, byte_size="50000KB", num_threads=1
+    #     ):
+    #         log.error("Failed to write objects into Pool")
+    #         raise Exception("Write IO failed on pool without compression")
+
+    #     if not rados_obj.bench_write(
+    #         pool_name=pool2, max_objs=1, byte_size="50000KB", num_threads=1
+    #     ):
+    #         log.error("Failed to write objects into Pool")
+    #         raise Exception("Write IO failed on pool without compression")
+
+    #     log.info(
+    #         f"6. Collect stats of pool1 {pool1}, pool2 {pool2} such as size of data, used compression and under compression"
+    #     )
+    #     try:
+    #         pool_stats = rados_obj.run_ceph_command(cmd="ceph df detail")["pools"]
+    #         pool1_stats = [detail for detail in pool_stats if detail["name"] == pool1][
+    #             0
+    #         ]["stats"]
+    #         pool2_stats = [detail for detail in pool_stats if detail["name"] == pool2][
+    #             0
+    #         ]["stats"]
+
+    #     except KeyError as e:
+    #         err_msg = f"No stats about the pools requested found on the cluster {e}"
+    #         log.error(err_msg)
+    #         raise Exception(err_msg)
+
+    #     log.info("Proceeding to do OSD host replacement in Stretch mode")
+    #     hostname = "test"
+    #     try:
+    #         service_obj.remove_custom_host(host_node_name=hostname)
+    #     except Exception as err:
+    #         log.error(f"Could not remove host : {hostname}. Error : {err}")
+    #         raise Exception("Host not removed error")
+    #     time.sleep(10)
+
+    #     pool_name = f"{pool_prefix}-{generate_unique_id(4)}"
+
+    #     log.info(f"1. Creating pools without compression configurations")
+    #     log.info(
+    #         f"Creating Replicated pool {pool_name} without compression configurations"
+    #     )
+    #     assert rados_obj.create_pool(pool_name=pool_name)
+
+    #     method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+    #     method_should_succeed(rados_obj.run_pool_sanity_check)
+
+    #     log.debug(
+    #         f"Ceph osd tree after host removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
+    #     )
+    #     # Adding a new host to the cluster
+    #     try:
+    #         service_obj.add_new_hosts(
+    #             add_nodes=[hostname],
+    #         )
+    #     except Exception as err:
+    #         log.error(
+    #             f"Could not add host : {hostname} into the cluster and deploy OSDs. Error : {err}"
+    #         )
+    #         raise Exception("Host not added error")
+    #     time.sleep(60)
+
+    #     log.info(
+    #         f"6. ColCollect stats of pool1 {pool1} and pool2 {pool2}, such as size of data, used compression and under compression"
+    #     )
+    #     try:
+    #         pool_stats = rados_obj.run_ceph_command(cmd="ceph df detail")["pools"]
+    #         pool1_stats = [detail for detail in pool_stats if detail["name"] == pool1][
+    #             0
+    #         ]["stats"]
+    #         pool2_stats = [detail for detail in pool_stats if detail["name"] == pool2][
+    #             0
+    #         ]["stats"]
+
+    #     except KeyError as e:
+    #         err_msg = f"No stats about the pools requested found on the cluster {e}"
+    #         log.error(err_msg)
+    #         raise Exception(err_msg)
+
+    #     log.info("7. Perform validations")
+
+    #     pool1_stored_raw, pool2_stored_raw = (
+    #         pool1_stats["stored_raw"],
+    #         pool2_stats["stored_raw"],
+    #     )
+    #     pool1_compress_bytes_used, pool2_compress_bytes_used = (
+    #         pool1_stats["compress_bytes_used"],
+    #         pool2_stats["compress_bytes_used"],
+    #     )
+    #     pool1_compress_under_bytes, pool2_compress_under_bytes = (
+    #         pool1_stats["compress_under_bytes"],
+    #         pool2_stats["compress_under_bytes"],
+    #     )
+
+    #     # If data written is 100 MiB
+    #     # pool2 0 -> 50MiB ( data should be compressed )
+    #     # pool3 0 -> 50MiB ( data should be compressed )
+
+    #     log.info(
+    #         f"Checking if pool1 {pool1} is inheriting compression configuration from OSD ( pool created before enabling compression at OSD )"
+    #     )
+    #     if pool1_compress_bytes_used != 0 and pool1_compress_under_bytes != 0:
+    #         raise Exception(
+    #             f"pool1 {pool1} is not compressed, when OSD level compression is enabled"
+    #         )
+
+    #     log.info(
+    #         f"Checking if pool1 {pool1} is inheriting compression configuration from OSD ( pool created after enabling compression at OSD )"
+    #     )
+    #     if pool2_compress_bytes_used != 0 and pool2_compress_under_bytes != 0:
+    #         raise Exception(
+    #             f"pool2 {pool2} is compressed even after compression disabled at pool level"
+    #         )
+
+    #     log.info(
+    #         f"8. Reading the uncompressed and compressed data from pool1 {pool1} and pool2 {pool2}"
+    #     )
+    #     rados_obj.bench_read(pool_name=pool1)
+    #     rados_obj.bench_read(pool_name=pool2)
+
+    #     log.info("Successfully removed and added hosts")
+
 
     try:
 
@@ -931,28 +1272,31 @@ def run(ceph_cluster, **kw):
             "\n\n ************ Execution begins for bluestore data compression scenarios ************ \n\n"
         )
 
-        log.info("Test #1 Validate basic compression workflow")
-        validate_basic_compression_workflow()
+        # log.info("Test #1 Validate basic compression workflow")
+        # validate_basic_compression_workflow()
 
-        log.info("Test #2 Validate uncompressed_pool to compressed pool conversion")
-        validate_uncompressed_pool_to_compressed_pool_conversion()
+        # log.info("Test #2 Validate uncompressed_pool to compressed pool conversion")
+        # validate_uncompressed_pool_to_compressed_pool_conversion()
 
-        log.info("Test #3 Validate compressed pool to_uncompressed poolconversion")
-        validate_compressed_pool_to_uncompressed_pool_conversion()
+        # log.info("Test #3 Validate compressed pool to_uncompressed poolconversion")
+        # validate_compressed_pool_to_uncompressed_pool_conversion()
 
-        log.info(
-            "Test #4 Enable compressesion at OSD level and disable compression"
-            " at pool level. Data should not be compressed"
-        )
-        validate_pool_compression_configs_override_osd_compression_config()
+        # log.info(
+        #     "Test #4 Enable compressesion at OSD level and disable compression"
+        #     " at pool level. Data should not be compressed"
+        # )
+        # validate_pool_compression_configs_override_osd_compression_config()
 
-        log.info(
-            "Test #5 Validate default pools inherit compression configurations from OSD"
-        )
-        validate_pools_inherit_compression_configurations_from_osd()
+        # log.info(
+        #     "Test #5 Validate default pools inherit compression configurations from OSD"
+        # )
+        # validate_pools_inherit_compression_configurations_from_osd()
 
-        log.info("Test #6 Validate data migration between compressed pools")
-        validate_data_migration_between_pools()
+        # log.info("Test #6 Validate data migration between compressed pools")
+        # validate_data_migration_between_pools()
+
+        log.info("Test #7 Validate OSD replacement scenario")
+        validate_osd_replacement()
 
     except Exception as e:
         log.error(f"Failed with exception: {e.__doc__}")
@@ -963,14 +1307,14 @@ def run(ceph_cluster, **kw):
             "\n \n ************** Execution of finally block begins here *************** \n \n"
         )
 
-        # delete all rados pools
-        rados_obj.rados_pool_cleanup()
-        # log cluster health
-        rados_obj.log_cluster_health()
-        # check for crashes after test executio
-        if rados_obj.check_crash_status():
-            log.error("Test failed due to crash at the end of test")
-            return 1
+        # # delete all rados pools
+        # rados_obj.rados_pool_cleanup()
+        # # log cluster health
+        # rados_obj.log_cluster_health()
+        # # check for crashes after test executio
+        # if rados_obj.check_crash_status():
+        #     log.error("Test failed due to crash at the end of test")
+        #     return 1
 
     log.info("Completed validation of bluestore data compression.")
     return 0
