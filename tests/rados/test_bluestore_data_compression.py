@@ -12,16 +12,16 @@ import json
 import time
 
 from ceph.ceph_admin import CephAdmin
+from ceph.rados import utils
 from ceph.rados.core_workflows import RadosOrchestrator
 from ceph.rados.pool_workflows import PoolFunctions
+from ceph.rados.serviceability_workflows import ServiceabilityMethods
 from tests.rados.monitor_configurations import MonConfigMethods
+from tests.rados.rados_test_util import get_device_path, wait_for_device_rados
+from tests.rados.stretch_cluster import wait_for_clean_pg_sets
 from utility.log import Log
 from utility.utils import generate_unique_id
 from utility.utils import method_should_succeed, should_not_be_empty
-from tests.rados.rados_test_util import get_device_path, wait_for_device
-from ceph.rados import utils
-from tests.rados.stretch_cluster import wait_for_clean_pg_sets
-from tests.rados.rados_test_util import get_device_path, wait_for_device_rados
 
 log = Log(__name__)
 
@@ -41,6 +41,7 @@ def run(ceph_cluster, **kw):
     mon_obj = MonConfigMethods(rados_obj=rados_obj)
     client_node = ceph_cluster.get_nodes(role="client")[0]
     pool_obj = PoolFunctions(node=cephadm)
+    service_obj = ServiceabilityMethods(cluster=ceph_cluster, **config)
 
     def validate_basic_compression_workflow():
         log.info(
@@ -67,9 +68,9 @@ def run(ceph_cluster, **kw):
         log_info_msg = f"2. Enable compression on the pool {pool_name}"
         log.info(log_info_msg)
         if not rados_obj.pool_inline_compression(
-            pool_name=pool_name,
-            compression_mode="force",
-            compression_algorithm="snappy",
+                pool_name=pool_name,
+                compression_mode="force",
+                compression_algorithm="snappy",
         ):
             err_msg = f"Error setting compression on pool : {pool_name}"
             log.error(err_msg)
@@ -78,13 +79,13 @@ def run(ceph_cluster, **kw):
         log_info_msg = f"3. Write IO to the pool {pool_name}"
         log.info(log_info_msg)
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool_name,
-                nobj=10,
-                obj_name=f"{pool_name}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool_name,
+                    nobj=10,
+                    obj_name=f"{pool_name}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             log.error("Failed to write objects into Pool")
             raise Exception("Write IO failed on pool without compression")
@@ -130,8 +131,8 @@ def run(ceph_cluster, **kw):
         # compression enabled, hence compressed data should be less than 87.5% of original data
         log.info("Validating if compression_required_ratio is maintained")
         if not compression_ratio_maintained(
-            pool_stats=pool_stats,
-            bluestore_compression_required_ratio=bluestore_compression_required_ratio,
+                pool_stats=pool_stats,
+                bluestore_compression_required_ratio=bluestore_compression_required_ratio,
         ):
             raise Exception(
                 f"Pool {pool_name}: compression_required_ratio is not maintained"
@@ -199,9 +200,9 @@ def run(ceph_cluster, **kw):
         log_info_msg = f"4. Enable compression on the pool {pool_name}"
         log.info(log_info_msg)
         if not rados_obj.pool_inline_compression(
-            pool_name=pool_name,
-            compression_mode="force",
-            compression_algorithm="snappy",
+                pool_name=pool_name,
+                compression_mode="force",
+                compression_algorithm="snappy",
         ):
             err_msg = f"Error setting compression on pool : {pool_name}"
             log.error(err_msg)
@@ -276,8 +277,8 @@ def run(ceph_cluster, **kw):
         ]  # includes replication factor => 12582912
 
         total_data_written_after_compression = (
-            pool_stats_after_compression["stored_raw"]
-            - total_data_written_before_compression
+                pool_stats_after_compression["stored_raw"]
+                - total_data_written_before_compression
         )  # 369098752 - 125829120 = 243269632
 
         bluestore_compression_required_ratio = (
@@ -290,9 +291,9 @@ def run(ceph_cluster, **kw):
             "Check #1 Validation for data written after enabling compression should be compressed."
         )
         if not is_deviation_within_allowed_percentage(
-            total_data_written_after_compression,
-            pool_stats_after_compression["compress_under_bytes"],
-            10,
+                total_data_written_after_compression,
+                pool_stats_after_compression["compress_under_bytes"],
+                10,
         ):
             log_msg = f"Data written after compression : {total_data_written_after_compression}\
                 | Data being compressed : {pool_stats_after_compression['compress_under_bytes']}"
@@ -302,7 +303,7 @@ def run(ceph_cluster, **kw):
             "Check #2 Validation for data compression abides by bluestore_compression_required_ratio"
         )
         if not compression_ratio_maintained(
-            pool_stats_after_compression, bluestore_compression_required_ratio
+                pool_stats_after_compression, bluestore_compression_required_ratio
         ):
             log_msg = f"compress_under_bytes => {pool_stats_after_compression['compress_under_bytes']}\
                 compress_bytes_used => {pool_stats_after_compression['compress_bytes_used']}"
@@ -365,9 +366,9 @@ def run(ceph_cluster, **kw):
         log_info_msg = f"2. Enable compression on the pool {pool_name}"
         log.info(log_info_msg)
         if not rados_obj.pool_inline_compression(
-            pool_name=pool_name,
-            compression_mode="force",
-            compression_algorithm="snappy",
+                pool_name=pool_name,
+                compression_mode="force",
+                compression_algorithm="snappy",
         ):
             err_msg = f"Error setting compression on pool : {pool_name}"
             log.error(err_msg)
@@ -376,13 +377,13 @@ def run(ceph_cluster, **kw):
         log_info_msg = f"3. Write IO to the compressed pool {pool_name}"
         log.info(log_info_msg)
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool_name,
-                nobj=10,
-                obj_name=f"{pool_name}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool_name,
+                    nobj=10,
+                    obj_name=f"{pool_name}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool_name} failed"
             raise Exception(exception_msg)
@@ -402,7 +403,7 @@ def run(ceph_cluster, **kw):
         log_info_msg = f"5. Disable compression on pool {pool_name}"
         log.info(log_info_msg)
         if not rados_obj.pool_inline_compression(
-            pool_name=pool_name, compression_mode="none"
+                pool_name=pool_name, compression_mode="none"
         ):
             err_msg = f"Error disabling compression on pool : {pool_name}"
             log.error(err_msg)
@@ -423,28 +424,28 @@ def run(ceph_cluster, **kw):
         log.info("Pool stats after disabling compression , before writing new IO")
         log.info(json.dumps(pool_stats_after_disabling_compression_before_IO, indent=4))
         if not data_compressed(
-            pool_stats=pool_stats_after_disabling_compression_before_IO,
+                pool_stats=pool_stats_after_disabling_compression_before_IO,
         ):
             raise Exception(
                 "Even after disabling compression, existing data should remain compressed"
             )
 
         if not compression_ratio_maintained(
-            pool_stats_after_disabling_compression_before_IO,
-            bluestore_compression_required_ratio,
+                pool_stats_after_disabling_compression_before_IO,
+                bluestore_compression_required_ratio,
         ):
             raise Exception("Compression required ratio is not maintained")
 
         log_info_msg = f"7. Write IO to the compression disabled pool {pool_name}"
         log.info(log_info_msg)
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool_name,
-                nobj=20,
-                obj_name=f"{pool_name}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool_name,
+                    nobj=20,
+                    obj_name=f"{pool_name}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool_name} failed"
             raise Exception(exception_msg)
@@ -493,9 +494,9 @@ def run(ceph_cluster, **kw):
 
         log.info("Validating new data is not being compressed")
         if not is_deviation_within_allowed_percentage(
-            pool_stats_after_disabling_compression_and_after_IO["compress_under_bytes"],
-            pool_stats_before_disabling_compression["compress_under_bytes"],
-            10,
+                pool_stats_after_disabling_compression_and_after_IO["compress_under_bytes"],
+                pool_stats_before_disabling_compression["compress_under_bytes"],
+                10,
         ):
             raise Exception(
                 "New data written after disabling compression is still being compressed"
@@ -542,7 +543,7 @@ def run(ceph_cluster, **kw):
         assert rados_obj.create_pool(pool_name=pool1)
 
         if not rados_obj.pool_inline_compression(
-            pool_name=pool1, compression_mode="none", compression_algorithm="snappy"
+                pool_name=pool1, compression_mode="none", compression_algorithm="snappy"
         ):
             err_msg = f"Error disabling compression on pool : {pool1}"
             log.error(err_msg)
@@ -563,7 +564,7 @@ def run(ceph_cluster, **kw):
         assert rados_obj.create_pool(pool_name=pool2)
 
         if not rados_obj.pool_inline_compression(
-            pool_name=pool2, compression_mode="none", compression_algorithm="snappy"
+                pool_name=pool2, compression_mode="none", compression_algorithm="snappy"
         ):
             err_msg = f"Error disabling compression on pool : {pool2}"
             log.error(err_msg)
@@ -574,25 +575,25 @@ def run(ceph_cluster, **kw):
         log_info_msg = f"4. Write IO to pool1 {pool1} and pool2 {pool2}"
         log.info(log_info_msg)
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool1,
-                nobj=10,
-                obj_name=f"{pool1}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool1,
+                    nobj=10,
+                    obj_name=f"{pool1}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool1} failed"
             raise Exception(exception_msg)
 
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool2,
-                nobj=10,
-                obj_name=f"{pool2}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool2,
+                    nobj=10,
+                    obj_name=f"{pool2}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool2} failed"
             raise Exception(exception_msg)
@@ -652,13 +653,13 @@ def run(ceph_cluster, **kw):
                  and bluestore_compression_mode) "
         )
         if not mon_obj.remove_config(
-            section="osd", name="bluestore_compression_algorithm", value="snappy"
+                section="osd", name="bluestore_compression_algorithm", value="snappy"
         ):
             raise Exception(
                 "Could not remove bluestore_compression_algorithm configuration set on OSD"
             )
         if not mon_obj.remove_config(
-            section="osd", name="bluestore_compression_mode", value="force"
+                section="osd", name="bluestore_compression_mode", value="force"
         ):
             raise Exception(
                 "Could not remove bluestore_compression_mode configuration set on OSD"
@@ -703,13 +704,13 @@ def run(ceph_cluster, **kw):
         log_info_msg = f"4. Write IO to pool1 {pool1} and pool2 {pool2}"
         log.info(log_info_msg)
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool1,
-                nobj=20,
-                obj_name=f"{pool1}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool1,
+                    nobj=20,
+                    obj_name=f"{pool1}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool1} failed"
             raise Exception(exception_msg)
@@ -717,13 +718,13 @@ def run(ceph_cluster, **kw):
         time.sleep(10)
 
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool2,
-                nobj=20,
-                obj_name=f"{pool2}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool2,
+                    nobj=20,
+                    obj_name=f"{pool2}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool1} failed"
             raise Exception(exception_msg)
@@ -823,7 +824,7 @@ def run(ceph_cluster, **kw):
             target_replicated_pool,
         ]:
             if not rados_obj.pool_inline_compression(
-                pool_name=pool, compression_mode="force", compression_algorithm="snappy"
+                    pool_name=pool, compression_mode="force", compression_algorithm="snappy"
             ):
                 err_msg = f"Error enabling compression on pool : {pool}"
                 log.error(err_msg)
@@ -836,13 +837,13 @@ def run(ceph_cluster, **kw):
             log_info_msg = f"Writing data to source pool: {source_pools}"
             log.info(log_info_msg)
             if (
-                pool_obj.do_rados_put(
-                    client=client_node,
-                    pool=source_pool,
-                    nobj=10,
-                    obj_name=f"{source_pool}-{generate_unique_id(4)}",
-                )
-                == 1
+                    pool_obj.do_rados_put(
+                        client=client_node,
+                        pool=source_pool,
+                        nobj=10,
+                        obj_name=f"{source_pool}-{generate_unique_id(4)}",
+                    )
+                    == 1
             ):
                 exception_msg = f"Writing IO to pool {source_pool} failed"
                 raise Exception(exception_msg)
@@ -909,8 +910,8 @@ def run(ceph_cluster, **kw):
                 )
             )
             if not compression_ratio_maintained(
-                pool_stats=target_pool_map[source_pool]["stats"],
-                bluestore_compression_required_ratio=bluestore_compression_required_ratio,
+                    pool_stats=target_pool_map[source_pool]["stats"],
+                    bluestore_compression_required_ratio=bluestore_compression_required_ratio,
             ):
                 err_msg = f"compression_required_ratio is not maintained\
                       by target pool {target_pool_map[source_pool]['name']}"
@@ -929,7 +930,6 @@ def run(ceph_cluster, **kw):
             raise Exception("Failed to delete pool ", source_replicated_pool)
         if rados_obj.delete_pool(pool=source_erasure_coded_pool) is False:
             raise Exception("Failed to delete pool ", source_erasure_coded_pool)
-        
 
     def validate_osd_replacement():
         log.info(
@@ -954,46 +954,68 @@ def run(ceph_cluster, **kw):
         log.info(log_info_msg)
         assert rados_obj.create_pool(pool_name=pool_name)
 
+
+
+
+
+
         log_info_msg = f"2. Enable compression on the pool {pool_name}"
         log.info(log_info_msg)
         if not rados_obj.pool_inline_compression(
-            pool_name=pool_name,
-            compression_mode="force",
-            compression_algorithm="snappy",
+                pool_name=pool_name,
+                compression_mode="force",
+                compression_algorithm="snappy",
         ):
             err_msg = f"Error setting compression on pool : {pool_name}"
             log.error(err_msg)
             raise Exception(err_msg)
 
+
+
+
+
         log_info_msg = f"3. Write IO to pool {pool_name}"
         log.info(log_info_msg)
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool_name,
-                nobj=10,
-                obj_name=f"{pool_name}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool_name,
+                    nobj=10,
+                    obj_name=f"{pool_name}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool_name} failed"
             raise Exception(exception_msg)
-        
-        
-        log_info_msg = f"Check if data is compressed on pool {pool_name}"
+
+
+
+
+
+
+
+
+
+
+        log_info_msg = f"4. Collect stats and Check if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
         pool_stats = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
         if not data_compressed(pool_stats=pool_stats):
             err_msg = f"Data in the pool {pool_name} is not compressed after enabling compression"
             raise Exception(err_msg)
 
-        # Increasing the recovery threads on the cluster
-        rados_obj.change_recovery_threads(config={}, action="set")
 
+
+
+
+
+        # Increasing the recovery threads on the cluster
+        log_info_msg = f"5. Remove OSD from the cluster"
+        rados_obj.change_recovery_threads(config={}, action="set")
         target_osd = rados_obj.get_pg_acting_set(pool_name=pool_name)[0]
         log.debug(
             f"Ceph osd tree before OSD removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
         )
-
         test_host = rados_obj.fetch_host_node(daemon_type="osd", daemon_id=target_osd)
         should_not_be_empty(test_host, "Failed to fetch host details")
         dev_path = get_device_path(test_host, target_osd)
@@ -1014,18 +1036,43 @@ def run(ceph_cluster, **kw):
             wait_for_device_rados, test_host, target_osd, action="remove"
         )
         method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
-
         log.info(
             f"Removal of OSD : {target_osd} is successful."
         )
 
-        log_info_msg = f"Check if data is compressed on pool {pool_name}"
+
+
+
+
+
+
+        log_info_msg = f"6. Check if data is still compressed on pool {pool_name} after OSD removal and read data from compressed pool"
+        log.info(log_info_msg)
+
+        log_info_msg = f"Checking if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
         pool_stats_after_osd_removal = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
-        if not data_compressed(pool_stats=pool_stats):
+
+        # Example:
+        # pool_stats_after_osd_removal {
+        # "bytes_used": 62914560,
+        # "compress_bytes_used": 62914560,
+        # "compress_under_bytes": 125829120,
+        # "data_bytes_used": 62914560,
+        # "stored_raw": 125829120,
+        # }
+
+        # Check if compress_under_bytes and compress_used_bytes != 0
+        if not data_compressed(pool_stats=pool_stats_after_osd_removal):
             err_msg = f"Data in the pool is not compressed after OSD removal"
             raise Exception(err_msg)
-        
-        if not is_deviation_within_allowed_percentage(pool_stats["compressed_under_bytes"], pool_stats_after_osd_removal["compressed_under_bytes"], 10):
+
+        # Check if all the data being written is compressed
+        if not is_deviation_within_allowed_percentage(
+                int(pool_stats_after_osd_removal["stored_raw"]),
+                int(pool_stats_after_osd_removal["compress_under_bytes"]),
+                10
+        ):
             raise Exception()
 
         log_info_msg = f"Reading data from pool {pool_name}"
@@ -1034,29 +1081,38 @@ def run(ceph_cluster, **kw):
             raise Exception(f"Reading data from pool {pool_name} failed")
 
         # write to the pool and check compression
-        log_info_msg = f"Write IO to pool {pool_name}"
+        log_info_msg = f"6. Write IO to pool {pool_name} after OSD removal"
         log.info(log_info_msg)
+        obj_name = f"{pool_name}-{generate_unique_id(4)}"
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool_name,
-                nobj=10,
-                obj_name=f"{pool_name}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool_name,
+                    nobj=10,
+                    obj_name=obj_name,
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool_name} failed"
             raise Exception(exception_msg)
-        
+
+        log_info_msg = f"7. Validate new data written after OSD removal to the pool is still being compressed"
         pool_stats_after_osd_removal_and_IO = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
-        # new data written 
-        previously_written_data = pool_stats["stored_raw"]
-        data_written = pool_stats_after_osd_removal_and_IO["stored_raw"] - pool_stats["stored_raw"]
-        if not is_deviation_within_allowed_percentage(pool_stats_after_osd_removal_and_IO["compress_under_bytes"], previously_written_data+data_written):
+        # Check if compress_under_bytes and compress_used_bytes != 0
+        if not data_compressed(pool_stats=pool_stats_after_osd_removal_and_IO):
+            err_msg = f"Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+
+        # Check if all the data being written is compressed
+        if not is_deviation_within_allowed_percentage(
+                int(pool_stats_after_osd_removal_and_IO["stored_raw"]),
+                int(pool_stats_after_osd_removal_and_IO["compress_under_bytes"]),
+                10
+        ):
             raise Exception()
 
         # Adding the removed OSD back and checking the cluster status
-        log.debug("Adding the removed OSD back and checking the cluster status")
+        log.debug("8. Adding the removed OSD back and checking the cluster status")
         utils.add_osd(ceph_cluster, test_host.hostname, dev_path, target_osd)
         method_should_succeed(
             wait_for_device_rados, test_host, target_osd, action="add"
@@ -1074,14 +1130,12 @@ def run(ceph_cluster, **kw):
         utils.set_osd_devices_unmanaged(ceph_cluster, target_osd, unmanaged=False)
         log.info("Completed the removal and addition of OSD daemons")
 
-        log_info_msg = f"Check if data is compressed on pool {pool_name}"
-        pool_stats_after_osd_removal = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
-        if not data_compressed(pool_stats=pool_stats):
+        log_info_msg = f"9. Check if data is compressed on pool {pool_name} after OSD addition"
+        log.info(log_info_msg)
+        pool_stats_after_osd_addition = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        if not data_compressed(pool_stats=pool_stats_after_osd_addition):
             err_msg = f"Data in the pool is not compressed after OSD removal"
             raise Exception(err_msg)
-        
-        if not is_deviation_within_allowed_percentage(pool_stats["compressed_under_bytes"], pool_stats_after_osd_removal["compressed_under_bytes"], 10):
-            raise Exception()
 
         log_info_msg = f"Reading data from pool {pool_name}"
         log.info(log_info_msg)
@@ -1089,181 +1143,171 @@ def run(ceph_cluster, **kw):
             raise Exception(f"Reading data from pool {pool_name} failed")
 
         # write to the pool and check compression
-        log_info_msg = f"Write IO to pool {pool_name}"
+        log_info_msg = f"10. Write IO to pool {pool_name} after OSD addition to validate new written data is\
+            compressed after OSD addition"
         log.info(log_info_msg)
         if (
-            pool_obj.do_rados_put(
-                client=client_node,
-                pool=pool_name,
-                nobj=10,
-                obj_name=f"{pool_name}-{generate_unique_id(4)}",
-            )
-            == 1
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool_name,
+                    nobj=10,
+                    obj_name=f"{pool_name}-{generate_unique_id(4)}",
+                )
+                == 1
         ):
             exception_msg = f"Writing IO to pool {pool_name} failed"
             raise Exception(exception_msg)
+
+        log_info_msg = f"11. Validate new written data is\
+            compressed after OSD addition"
+        log.info(log_info_msg)
+
+
+        pool_stats_after_osd_addition_and_IO = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+        if not data_compressed(pool_stats_after_osd_addition_and_IO):
+            raise Exception()
+
+        if not is_deviation_within_allowed_percentage(
+                int(pool_stats_after_osd_addition_and_IO["stored_raw"]),
+                int(pool_stats_after_osd_addition_and_IO["compress_under_bytes"]), 10):
+            raise Exception()
         
-        # pool_stats_after_osd_removal_and_IO = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
-        # # new data written 
-        # previously_written_data = pool_stats["stored_raw"]
-        # data_written = pool_stats_after_osd_removal_and_IO["stored_raw"] - pool_stats["stored_raw"]
-        # if not is_deviation_within_allowed_percentage(pool_stats_after_osd_removal_and_IO["compress_under_bytes"], previously_written_data+data_written):
-        #     raise Exception()
+
+    def validate_osd_host_removal():
+        """
+        1. Creating pools without compression configurations
+
+        """
+
+        pool_name = f"{pool_prefix}-{generate_unique_id(4)}"
+
+        log.info(f"1. Creating pools")
+        log.info(f"Creating Replicated pool {pool_name}")
+        assert rados_obj.create_pool(pool_name=pool_name)
 
 
 
 
-    # def validate_osd_host_removal():
+        log.info(f"2. Create pool {pool_name} with compression enabled")
+        if not rados_obj.pool_inline_compression(
+                pool_name=pool_name, compression_mode="force", compression_algorithm="snappy"
+        ):
+            err_msg = f"Error disabling compression on pool : {pool_name}"
+            log.error(err_msg)
+            raise Exception(err_msg)
+        
 
-    #     # Test #10 OSD host removal
 
-    #     pool1 = f"{pool_prefix}-{generate_unique_id(4)}"
-    #     pool2 = f"{pool_prefix}-{generate_unique_id(4)}"
 
-    #     log.info(f"1. Creating pools without compression configurations")
-    #     log.info(f"Creating Replicated pool {pool1} without compression configurations")
-    #     assert rados_obj.create_pool(pool_name=pool1)
+        log_info_msg = f"3. Write IO to pool {pool_name}"
+        log.info(log_info_msg)
+        if (
+                pool_obj.do_rados_put(
+                    client=client_node,
+                    pool=pool_name,
+                    nobj=10,
+                    obj_name=f"{pool_name}-{generate_unique_id(4)}",
+                )
+                == 1
+        ):
+            exception_msg = f"Writing IO to pool {pool_name} failed"
+            raise Exception(exception_msg)
 
-    #     log.info(f"4. Create pool3 {pool1} with compression disabled")
-    #     if not rados_obj.pool_inline_compression(
-    #         pool_name=pool1, compression_mode="none", compression_algorithm="snappy"
-    #     ):
-    #         err_msg = f"Error disabling compression on pool : {pool1}"
-    #         log.error(err_msg)
-    #         raise Exception(err_msg)
+        log.info(
+            f"6. Collect stats of pool {pool_name} such as size of data, used compression and under compression"
+        )
+        pool_stats = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
 
-    #     log.info(f"3. Enable Compression as OSD config")
-    #     mon_obj.set_config(
-    #         section="osd", name="bluestore_compression_algorithm", value="snappy"
-    #     )
-    #     mon_obj.set_config(
-    #         section="osd", name="bluestore_compression_mode", value="force"
-    #     )
 
-    #     log.info(f"5. Write IO to pool1 {pool1} and pool2 {pool2}")
-    #     if not rados_obj.bench_write(
-    #         pool_name=pool1, max_objs=1, byte_size="50000KB", num_threads=1
-    #     ):
-    #         log.error("Failed to write objects into Pool")
-    #         raise Exception("Write IO failed on pool without compression")
+        log.info("7. Proceeding to do OSD host replacement")
+        pg_set = rados_obj.get_pg_acting_set(pool_name=pool_name)
+        target_osd = pg_set[0]
+        test_host = rados_obj.fetch_host_node(daemon_type="osd", daemon_id=target_osd)
+        hostname = test_host.hostname
 
-    #     if not rados_obj.bench_write(
-    #         pool_name=pool2, max_objs=1, byte_size="50000KB", num_threads=1
-    #     ):
-    #         log.error("Failed to write objects into Pool")
-    #         raise Exception("Write IO failed on pool without compression")
+        try:
+            service_obj.remove_custom_host(host_node_name=hostname)
+        except Exception as err:
+            log.error(f"Could not remove host : {hostname}. Error : {err}")
+            raise Exception("Host not removed error")
+        time.sleep(10)
 
-    #     log.info(
-    #         f"6. Collect stats of pool1 {pool1}, pool2 {pool2} such as size of data, used compression and under compression"
-    #     )
-    #     try:
-    #         pool_stats = rados_obj.run_ceph_command(cmd="ceph df detail")["pools"]
-    #         pool1_stats = [detail for detail in pool_stats if detail["name"] == pool1][
-    #             0
-    #         ]["stats"]
-    #         pool2_stats = [detail for detail in pool_stats if detail["name"] == pool2][
-    #             0
-    #         ]["stats"]
+        pool_stats = get_pool_stats(pool_name=pool_name)
+        if not data_compressed(pool_stats=pool_stats):
+            raise Exception()
 
-    #     except KeyError as e:
-    #         err_msg = f"No stats about the pools requested found on the cluster {e}"
-    #         log.error(err_msg)
-    #         raise Exception(err_msg)
+        method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
+        method_should_succeed(rados_obj.run_pool_sanity_check)
 
-    #     log.info("Proceeding to do OSD host replacement in Stretch mode")
-    #     hostname = "test"
-    #     try:
-    #         service_obj.remove_custom_host(host_node_name=hostname)
-    #     except Exception as err:
-    #         log.error(f"Could not remove host : {hostname}. Error : {err}")
-    #         raise Exception("Host not removed error")
-    #     time.sleep(10)
+        log.debug(
+            f"Ceph osd tree after host removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
+        )
 
-    #     pool_name = f"{pool_prefix}-{generate_unique_id(4)}"
+        # Data existed before osd host removal should be compressed after host removal
+        log.info("7. Validations")
+        log_info_msg = f"Checking if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
+        pool_stats_after_osd_host_removal = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
 
-    #     log.info(f"1. Creating pools without compression configurations")
-    #     log.info(
-    #         f"Creating Replicated pool {pool_name} without compression configurations"
-    #     )
-    #     assert rados_obj.create_pool(pool_name=pool_name)
+        # Check if compress_under_bytes and compress_used_bytes != 0
+        if not data_compressed(pool_stats=pool_stats_after_osd_host_removal):
+            err_msg = f"Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
 
-    #     method_should_succeed(wait_for_clean_pg_sets, rados_obj, timeout=12000)
-    #     method_should_succeed(rados_obj.run_pool_sanity_check)
+        
+        log_info_msg = f"Reading data from pool {pool_name}"
+        log.info(log_info_msg)
+        if not pool_obj.do_rados_get(pool=pool_name, read_count="all"):
+            raise Exception(f"Reading data from pool {pool_name} failed")
 
-    #     log.debug(
-    #         f"Ceph osd tree after host removal : \n\n {rados_obj.run_ceph_command(cmd='ceph osd tree')} \n\n"
-    #     )
-    #     # Adding a new host to the cluster
-    #     try:
-    #         service_obj.add_new_hosts(
-    #             add_nodes=[hostname],
-    #         )
-    #     except Exception as err:
-    #         log.error(
-    #             f"Could not add host : {hostname} into the cluster and deploy OSDs. Error : {err}"
-    #         )
-    #         raise Exception("Host not added error")
-    #     time.sleep(60)
+        
 
-    #     log.info(
-    #         f"6. ColCollect stats of pool1 {pool1} and pool2 {pool2}, such as size of data, used compression and under compression"
-    #     )
-    #     try:
-    #         pool_stats = rados_obj.run_ceph_command(cmd="ceph df detail")["pools"]
-    #         pool1_stats = [detail for detail in pool_stats if detail["name"] == pool1][
-    #             0
-    #         ]["stats"]
-    #         pool2_stats = [detail for detail in pool_stats if detail["name"] == pool2][
-    #             0
-    #         ]["stats"]
 
-    #     except KeyError as e:
-    #         err_msg = f"No stats about the pools requested found on the cluster {e}"
-    #         log.error(err_msg)
-    #         raise Exception(err_msg)
 
-    #     log.info("7. Perform validations")
 
-    #     pool1_stored_raw, pool2_stored_raw = (
-    #         pool1_stats["stored_raw"],
-    #         pool2_stats["stored_raw"],
-    #     )
-    #     pool1_compress_bytes_used, pool2_compress_bytes_used = (
-    #         pool1_stats["compress_bytes_used"],
-    #         pool2_stats["compress_bytes_used"],
-    #     )
-    #     pool1_compress_under_bytes, pool2_compress_under_bytes = (
-    #         pool1_stats["compress_under_bytes"],
-    #         pool2_stats["compress_under_bytes"],
-    #     )
 
-    #     # If data written is 100 MiB
-    #     # pool2 0 -> 50MiB ( data should be compressed )
-    #     # pool3 0 -> 50MiB ( data should be compressed )
 
-    #     log.info(
-    #         f"Checking if pool1 {pool1} is inheriting compression configuration from OSD ( pool created before enabling compression at OSD )"
-    #     )
-    #     if pool1_compress_bytes_used != 0 and pool1_compress_under_bytes != 0:
-    #         raise Exception(
-    #             f"pool1 {pool1} is not compressed, when OSD level compression is enabled"
-    #         )
 
-    #     log.info(
-    #         f"Checking if pool1 {pool1} is inheriting compression configuration from OSD ( pool created after enabling compression at OSD )"
-    #     )
-    #     if pool2_compress_bytes_used != 0 and pool2_compress_under_bytes != 0:
-    #         raise Exception(
-    #             f"pool2 {pool2} is compressed even after compression disabled at pool level"
-    #         )
 
-    #     log.info(
-    #         f"8. Reading the uncompressed and compressed data from pool1 {pool1} and pool2 {pool2}"
-    #     )
-    #     rados_obj.bench_read(pool_name=pool1)
-    #     rados_obj.bench_read(pool_name=pool2)
 
-    #     log.info("Successfully removed and added hosts")
+
+
+
+
+
+        # Adding a new host to the cluster
+        log.info(" Adding new host")
+        try:
+            service_obj.add_new_hosts(
+                add_nodes=[hostname],
+            )
+        except Exception as err:
+            log.error(
+                f"Could not add host : {hostname} into the cluster and deploy OSDs. Error : {err}"
+            )
+            raise Exception("Host not added error")
+        time.sleep(60)
+
+        log.info(
+            f"Collect stats of pool {pool_name} such as size of data, used compression and under compression"
+        )
+
+
+        # Data existed before osd host removal should be compressed after host removal
+        log.info(" Validations")
+        log_info_msg = f"Checking if data is compressed on pool {pool_name}"
+        log.info(log_info_msg)
+        pool_stats_after_osd_host_removal = get_pool_stats(rados_obj=rados_obj, pool_name=pool_name)
+
+        # Check if compress_under_bytes and compress_used_bytes != 0
+        if not data_compressed(pool_stats=pool_stats_after_osd_host_removal):
+            err_msg = f"Data in the pool is not compressed after OSD removal"
+            raise Exception(err_msg)
+
+        log_info_msg = f"Reading data from pool {pool_name}"
+        log.info(log_info_msg)
+        if not pool_obj.do_rados_get(pool=pool_name, read_count="all"):
+            raise Exception(f"Reading data from pool {pool_name} failed")
 
 
     try:
@@ -1298,6 +1342,9 @@ def run(ceph_cluster, **kw):
         log.info("Test #7 Validate OSD replacement scenario")
         validate_osd_replacement()
 
+        log.info("Test #8 Validate OSD host replacement scenario")
+        validate_osd_host_removal()
+
     except Exception as e:
         log.error(f"Failed with exception: {e.__doc__}")
         log.exception(e)
@@ -1321,7 +1368,7 @@ def run(ceph_cluster, **kw):
 
 
 def get_default_bluestore_compression_required_ratio(
-    rados_obj: RadosOrchestrator, mon_obj: MonConfigMethods, pool_name: str
+        rados_obj: RadosOrchestrator, mon_obj: MonConfigMethods, pool_name: str
 ) -> str:
     """
     Retrieves the default value of the Bluestore compression required ratio for a given pool.
@@ -1417,7 +1464,7 @@ def get_compress_rejected_count(rados_obj: RadosOrchestrator, pool_name: str) ->
 
 
 def is_deviation_within_allowed_percentage(
-    written_data_size: int, compressed_data_size: int, percentage: int
+        written_data_size: int, compressed_data_size: int, percentage: int
 ) -> bool:
     """
     Checks if the compressed_data_size is within the percentage deviation from written_data_size
@@ -1467,7 +1514,7 @@ def data_compressed(pool_stats) -> bool:
 
 
 def compression_ratio_maintained(
-    pool_stats, bluestore_compression_required_ratio
+        pool_stats, bluestore_compression_required_ratio="0.875"
 ) -> bool:
     """
     Checks if compression_required_ratio maintained
@@ -1484,14 +1531,14 @@ def compression_ratio_maintained(
         False: If compression_required_ratio is not maintained
     """
     if pool_stats["compress_bytes_used"] <= (
-        pool_stats["compress_under_bytes"] * bluestore_compression_required_ratio
+            pool_stats["compress_under_bytes"] * bluestore_compression_required_ratio
     ):
         return True
     return False
 
 
 def validate_compress_success_rejected_count(
-    rados_obj: RadosOrchestrator, pool_name: str
+        rados_obj: RadosOrchestrator, pool_name: str
 ) -> bool:
     """
     Checks if compress_success_count > 0 and compress_rejected_count == 0.
@@ -1522,3 +1569,4 @@ def validate_compress_success_rejected_count(
         log.error(log_err_msg)
         return False
     return True
+
