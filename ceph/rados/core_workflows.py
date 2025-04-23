@@ -4918,12 +4918,12 @@ EOF"""
                 continue
             if unmanaged:
                 log.debug(
-                    f"Setting the {_service} service as unmanaged by cephadm. current status : {out}"
+                    f"Setting the {_service['service_name']} service as unmanaged by cephadm. current status : {out}"
                 )
                 _service["unmanaged"] = True
             else:
                 log.debug(
-                    f"Setting the {_service} service as managed by cephadm. current status : {out}"
+                    f"Setting the {_service['service_name']} service as managed by cephadm. current status : {out}"
                 )
                 _service.pop("unmanaged", "key not found")
             json_out = json.dumps(_service)
@@ -4938,7 +4938,7 @@ EOF"""
         out = self.list_orch_services(service_type=service_type, export=True)
         for _service in out:
             status = _service.get("unmanaged", False)
-            if status == "false":
+            if status is False:
                 unmanaged_check = False
             else:
                 unmanaged_check = True
