@@ -119,12 +119,20 @@ def run(ceph_cluster, **kw):
             out = bluestore_obj.add_wal_device(osd_id=osd_id, new_device=wal_target)
             log.info(out)
             assert "WAL device added" in out
-            osd_metadata = ceph_cluster.get_osd_metadata(
-                osd_id=int(osd_id), client=client
-            )
-            log.debug(f"OSD metadata for osd.{osd_id}: \n {osd_metadata}")
 
-            if not int(osd_metadata["bluefs_dedicated_wal"]) == 1:
+            for _ in range(3):
+                osd_metadata = ceph_cluster.get_osd_metadata(
+                    osd_id=int(osd_id), client=client
+                )
+                log.debug(f"OSD metadata for osd.{osd_id}: \n {osd_metadata}")
+
+                if int(osd_metadata["bluefs_dedicated_wal"]) != 1:
+                    time.sleep(30)
+                    continue
+                else:
+                    "'bluefs_dedicated_wal' entry in OSD metadata is 1"
+                    break
+            else:
                 log.error("'bluefs_dedicated_wal' entry in OSD metadata is not 1")
                 raise AssertionError(
                     "'bluefs_dedicated_wal' entry in OSD metadata is not 1"

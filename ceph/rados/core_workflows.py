@@ -4945,7 +4945,7 @@ EOF"""
 
             if unmanaged_check != unmanaged:
                 log.error(
-                    f"{service_type} Service with {_service['service_id']}not unmanaged={unmanaged} state. Fail"
+                    f"{service_type} Service with {_service['service_name']}not unmanaged={unmanaged} state. Fail"
                 )
                 return False
         log.info(f" All {service_type} Service in unmanaged={unmanaged} state. Pass")
