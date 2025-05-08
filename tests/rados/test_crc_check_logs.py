@@ -3,7 +3,6 @@ The file contains the script to check the "Full-object read crc" error in the OS
 with the different sizes
 """
 
-import re
 import time
 import traceback
 
@@ -64,9 +63,7 @@ def run(ceph_cluster, **kw):
         cmd_create_120mb_obj = "dd if=/dev/zero bs=1M count=120 > /tmp/120MB_file.txt"
         client.exec_command(cmd=cmd_create_120mb_obj)
 
-        init_time, _ = installer.exec_command(
-            cmd="sudo date '+%Y-%m-%dT%H:%M:%S.%3N+0000'"
-        )
+        init_time, _ = installer.exec_command(cmd="sudo date '+%Y-%m-%d %H:%M:%S'")
         init_time = init_time.strip()
         for pool_name in pool_names:
             msg_start_pool_test = f"Performing the tests on the--- {pool_name} pool"
@@ -106,9 +103,7 @@ def run(ceph_cluster, **kw):
 
         # A deliberate pause was implemented for log generation
         time.sleep(20)
-        end_time, _ = installer.exec_command(
-            cmd="sudo date '+%Y-%m-%dT%H:%M:%S.%3N+0000'"
-        )
+        end_time, _ = installer.exec_command(cmd="sudo date '+%Y-%m-%d %H:%M:%S'")
         end_time = end_time.strip()
 
         for pool_name in pool_names:
@@ -199,22 +194,26 @@ def check_read_crc_log(rados_object, init_time, end_time, pgid):
     msg_acting_set = f"The acting osd set of the pg {pgid} is {acting_set}"
     log.info(msg_acting_set)
     fsid = rados_object.run_ceph_command(cmd="ceph fsid")["fsid"]
+
     for osd_id in acting_set:
         host = rados_object.fetch_host_node(daemon_type="osd", daemon_id=osd_id)
-        cmd_get_log_lines = (
-            f'awk \'$1 >= "{init_time}" && $1 <= "{end_time}"\' '
-            f"/var/log/ceph/{fsid}/ceph-osd.{osd_id}.log"
-        )
-        osd_logs, err = host.exec_command(
+        systemctl_name = f"ceph-{fsid}@osd.{osd_id}.service"
+
+        out, _, exit_code, _ = host.exec_command(
             sudo=True,
-            cmd=cmd_get_log_lines,
+            cmd=f"journalctl -u {systemctl_name} --since '{init_time}' --until '{end_time}' | grep '{log_line}'",
+            long_running=True,
+            verbose=True,
         )
-        osd_lines = osd_logs.splitlines()
-        for osd_line in osd_lines:
-            if re.search(log_line, osd_line):
-                msg_err_msg = f" Found the error lines on OSD : {osd_id} and log line is {osd_line}"
-                log.error(msg_err_msg)
-                return False
+        if exit_code == 0:
+            msg_err_msg = (
+                f" Found the error lines on OSD : {osd_id}"
+                f"\n-----journalctl logs-------"
+                f"\n{out}"
+            )
+            log.error(msg_err_msg)
+            return False
+
     log.info(
         "The read crc error line not generated while reading the same object with different size "
     )
