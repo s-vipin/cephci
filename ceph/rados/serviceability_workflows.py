@@ -361,12 +361,19 @@ class ServiceabilityMethods:
         )
         return osd_metadata.get("osdspec_affinity", None)
 
-    def add_osds_to_managed_service(self, osds: list = None, spec: str = None) -> bool:
+    def add_osds_to_managed_service(
+        self,
+        osds: list = None,
+        spec: str = None,
+        remove_services_without_daemons: bool = False,
+    ) -> bool:
         """
         Method to identify non-managed OSDs and then add them back to managed state under existing OSD specs
         Args:
             osds: list of OSDs to be set to managed state
             spec: name of the spec that needs to be used for setting OSD to manage.
+            remove_services_without_daemons: ( type: bool ) If set to True, any OSD service managing with 0
+                daemons will be removed
         Returns:
             Pass -> True
             fail -> False
@@ -439,6 +446,14 @@ class ServiceabilityMethods:
             if self.unmanaged_osd_service_exists():
                 log.info("All OSDs not set to manage-able placement spec")
                 return False
+            if remove_services_without_daemons:
+                if (
+                    self.rados_obj.remove_empty_service_spec(service_type="osd")
+                    is False
+                ):
+                    log.info("Could not remove empty service spec")
+                    return False
+
             log.info("Completed running set-managed for all OSDs without correct spec")
             return True
 
@@ -478,9 +493,9 @@ class ServiceabilityMethods:
 
         status_cmd = "ceph orch osd rm status"
         end_time = datetime.datetime.now() + datetime.timedelta(seconds=3600)
-        drain_success = True
         while end_time > datetime.datetime.now():
             try:
+                drain_success = True
                 drain_ops = self.rados_obj.run_ceph_command(
                     cmd=status_cmd, client_exec=True
                 )
@@ -494,17 +509,13 @@ class ServiceabilityMethods:
                             "drain process for OSD %s is still going on"
                             % entry["osd_id"]
                         )
-                        if end_time < datetime.datetime.now():
-                            log.error(
-                                "Could not drain OSD %s within timeout"
-                                % entry["osd_id"]
-                            )
-                            drain_success = False
+                        drain_success = False
                         log.info("Sleeping for 120 seconds and checking again....")
                         time.sleep(120)
                     log.info("Drain operation completed for OSD %s" % entry["osd_id"])
-                log.info("Drain operations completed on host : " + host_obj.hostname)
-                break
+                if drain_success:
+                    log.info("Drain operations completed on host : " + host_obj.hostname)
+                    break
             except json.JSONDecodeError:
                 log.info("Drain operations completed on host : " + host_obj.hostname)
                 break
