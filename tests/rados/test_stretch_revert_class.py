@@ -47,6 +47,7 @@ class StretchMode:
         self.tiebreaker_mon_site_name = kwargs.get("tiebreaker_mon_site_name", "tiebreaker")
         self.tiebreaker_mon = self.get_tiebreaker_mon()
         self.pool_obj = kwargs.get("pool_obj")
+        self.custom_crush_rule = {}
 
     def get_tiebreaker_mon(self):
         """
@@ -100,6 +101,28 @@ class StretchMode:
             log.error(err_msg)
             raise Exception(err_msg)
 
+    def create_or_retrieve_crush_rule(self, crush_rule_name:str):
+        """
+        method to create CRUSH rule if it does not exist and if CRUSH rule exists
+        It will return the CRUSH rule ID.
+        Args:
+                crush_rule_name: (type: str) Name of the crush rule to create or retrieve
+        Returns:
+                CRUSH rule ID
+        Raise Exception:
+            If `ceph osd crush rule create-simple` or `ceph osd crush rule dump <rule name> fails`
+        """
+        if  self.custom_crush_rule.get(crush_rule_name, None) is not None:
+            return  self.custom_crush_rule["crush_rule_name"]
+
+        command = f"ceph osd crush rule create-simple {crush_rule_name} default osd"
+        self.rados_obj.run_ceph_command(cmd=command, client_exec=True, print_output=True)
+
+        command = f"ceph osd crush rule dump {crush_rule_name}"
+        out = self.rados_obj.run_ceph_command(cmd=command, client_exec=True, print_output=True)
+        self.custom_crush_rule[crush_rule_name] = out["rule_id"]
+        return self.custom_crush_rule[crush_rule_name]
+
 class RevertStretchModeFunctionalities(StretchMode):
     """
     Class contains revert stretch mode related methods.
@@ -149,7 +172,7 @@ class RevertStretchModeFunctionalities(StretchMode):
         log.info("Validating pool properties for each pool : ")
         log.info(pool_properties)
         cmd = "ceph osd pool ls detail"
-        pool_detail = self.rados_obj.run_ceph_command(cmd=cmd, client_exec=True)
+        pool_detail = self.rados_obj.run_ceph_command(cmd=cmd)
         for pool_detail in pool_detail:
             pool_name = pool_detail['pool_name']
             for property_name, property_value in pool_properties.items():
@@ -157,7 +180,9 @@ class RevertStretchModeFunctionalities(StretchMode):
                 log_msg = (f"\nPool name: {pool_name}"
                            f"\nExpected {property_name} -> {property_value}"
                            f"\nCurrent {property_name} -> {current_pool_property}")
+                log.info(log_msg)
                 if str(current_pool_property) != str(property_value):
+                    log.error("Failed to reset pool configurations." + log_msg)
                     raise Exception(log_msg)
         log.info("Successfully validated pool properties for all pool : ")
 
@@ -183,7 +208,7 @@ class RevertStretchModeFunctionalities(StretchMode):
             When the current OSD MAP property does not match the expected property.
         """
         cmd = "ceph osd dump"
-        ceph_osd_dump_output = self.rados_obj.run_ceph_command(cmd=cmd, client_exec=True, print_output=True)
+        ceph_osd_dump_output = self.rados_obj.run_ceph_command(cmd=cmd, print_output=True)
         osd_map_configs_to_validate = expected_osd_map_values.keys()  # ["stretch_mode_enabled", "stretch_bucket_count".....]
         log.info("Validating OSD map configs of stretch mode")
         for config_name in osd_map_configs_to_validate:
@@ -195,6 +220,7 @@ class RevertStretchModeFunctionalities(StretchMode):
                        )
             log.info(log_msg)
             if str(current_config_value) != str(expected_config_value):
+                log.error("Failed to reset Stretch mode related OSD map configurations." + log_msg)
                 raise Exception(
                     log_msg
                 )
@@ -220,7 +246,7 @@ class RevertStretchModeFunctionalities(StretchMode):
             When the expected MON map property does not match the current MON map values.
         """
         cmd = "ceph mon dump"
-        ceph_mon_dump_output = self.rados_obj.run_ceph_command(cmd=cmd, client_exec=True, print_output=True)
+        ceph_mon_dump_output = self.rados_obj.run_ceph_command(cmd=cmd, print_output=True)
 
         mon_map_configs_to_validate = expected_mon_map_values.keys()  # ["tiebreaker_mon", "stretch_mode", ..... ]
 
@@ -235,6 +261,7 @@ class RevertStretchModeFunctionalities(StretchMode):
             log.info(log_msg)
 
             if str(current_config_value) != str(expected_config_value):
+                log.error("Failed to reset Stretch mode related MON map configurations." + log_msg)
                 raise Exception(
                     log_msg
                 )

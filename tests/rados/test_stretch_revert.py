@@ -141,6 +141,7 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
         5) Validate stretch mode related configs are reset in OSD map
         6) Validate stretch mode related configs are reset in MON map
         7) Validate PGs reach active+clean
+        8) Re-enter stretch mode for next scenario
         """
         log.info(self.scenario1.__doc__)
         log.info("Step 1 -> Check if stretch mode is enabled")
@@ -185,6 +186,8 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
 
         log.info("Step 7 -> Validate PGs reach active+clean")
         wait_for_clean_pg_sets(rados_obj=self.rados_obj)
+
+        log.info("Step 8 ->  Re-enter stretch mode for next scenario")
         self.enable_stretch_mode(self.tiebreaker_mon)
 
     def scenario2(self, client_node:CephNode):
@@ -199,6 +202,7 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
         6) Validate stretch mode related configs are reset in OSD map
         7) Validate stretch mode related configs are reset in MON map
         8) Validate PGs reach active+clean
+        9) Re-enter stretch mode for next scenario
         """
         log.info(self.scenario2.__doc__)
         log.info("Step 1 -> Check stretch mode is enabled")
@@ -213,21 +217,20 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
         self.create_pool_and_write_io(pool_name, client_node=client_node)
 
         log.info("Step 3 ->  Create a custom crush rule")
-        command = f"ceph osd crush rule create-simple test-rule default osd"
-        self.rados_obj.run_ceph_command(cmd=command, client_exec=True, print_output=True)
+        custom_crush_rule_id = self.create_or_retrieve_crush_rule(crush_rule_name="test_rule")
 
-        log.info("Step 3 -> Revert from healthy stretch mode to non-default crush rule")
+        log.info("Step 4 -> Revert from healthy stretch mode to non-default crush rule")
         self.revert_stretch_mode()
 
-        log.info("Step 3 -> validate pool configurations are reset")
+        log.info("Step 5 -> validate pool configurations are reset")
         expected_pool_properties = {
             "size": "3",
             "min_size": "2",
-            "crush_rule": "0", # default crush rule has a crush rule id of 1
+            "crush_rule": custom_crush_rule_id,
         }
         self.validate_pool_configurations_post_revert(expected_pool_properties)
 
-        log.info("Step 4 -> validate osd configurations are reset")
+        log.info("Step 6 -> validate osd configurations are reset")
         expected_osd_map_values = {
             "stretch_mode_enabled": False,
             "stretch_bucket_count": 0,
@@ -237,7 +240,7 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
         }
         self.validate_osd_configurations_post_revert(expected_osd_map_values)
 
-        log.info("Step 5 -> validate mon configurations are reset")
+        log.info("Step 7 -> validate mon configurations are reset")
         expected_mon_map_values = {
             "tiebreaker_mon" : "",
             "stretch_mode" : False,
@@ -245,9 +248,10 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
         }
         self.validate_mon_configurations_post_revert(expected_mon_map_values)
 
-        log.info("Step 6 -> validate PG's reached active+clean")
+        log.info("Step 8 -> validate PG's reached active+clean")
         wait_for_clean_pg_sets(rados_obj=self.rados_obj)
 
+        log.info("Step 9 ->  Re-enter stretch mode for next scenario")
         self.enable_stretch_mode(self.tiebreaker_mon)
 
 
