@@ -417,3 +417,16 @@ tests:
           - scenario1
           - scenario2
       desc: Performs tests related to reverting from stretch mode
+
+  - test:
+      name: Revert stretch mode scenarios 3,4
+      module: test_stretch_revert.py
+      polarion-id: CEPH-83620057
+      config:
+        stretch_bucket: datacenter
+        tiebreaker_mon_site_name: tiebreaker
+        delete_pool: true
+        scenarios_to_run:
+          - scenario3
+          - scenario4
+      desc: Performs tests related to reverting from stretch mode

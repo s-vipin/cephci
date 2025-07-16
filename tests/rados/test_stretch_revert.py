@@ -1,17 +1,17 @@
 """
 This test module is used to test revert stretch mode
 includes:
-1. revert from health stretch mode to default/non-default crush rule
+1. revert from health stretch mode to default crush rule
 2. revert from health stretch mode to custom crush rule
-3. revert from site down stretch mode to default crush rule
-4. revert from site down stretch mode to custome crush rule
-5. revert from netsplit scenario to default/non-default crush rule
-6. revert from netsplit scenario to custom crush rule
+3. revert from netsplit scenario to default crush rule
+4. revert from netsplit scenario to custom crush rule
+5. revert from site down stretch mode to default crush rule
+6. revert from site down stretch mode to custom crush rule
 """
 
 from collections import namedtuple
+from operator import methodcaller
 
-from ceph.ceph import CephNode
 from ceph.ceph_admin import CephAdmin
 from ceph.rados.core_workflows import RadosOrchestrator
 from ceph.rados.pool_workflows import PoolFunctions
@@ -32,12 +32,12 @@ def run(ceph_cluster, **kw):
     Args:
         ceph_cluster (ceph.ceph.Ceph): ceph cluster
     Scenarios:
-        1. Scenario 1:- revert from health stretch mode to default/non-default crush rule
-        1. Scenario 2:- revert from health stretch mode to custom crush rule
-        2. Scenario 3:- revert from site down stretch mode to default crush rule
-        2. Scenario 4:- revert from site down stretch mode to custome crush rule
-        3. Scenario 5:- revert from netsplit scenario to default/non-default crush rule
-        3. Scenario 6:- revert from netsplit scenario to custom crush rule
+        1. revert from health stretch mode to default crush rule
+        2. revert from health stretch mode to custom crush rule
+        3. revert from netsplit scenario to default crush rule
+        4. revert from netsplit scenario to custom crush rule
+        5. revert from site down stretch mode to default crush rule
+        6. revert from site down stretch mode to custome crush rule
     """
 
     log.info(run.__doc__)
@@ -57,6 +57,8 @@ def run(ceph_cluster, **kw):
         [
             "scenario1",
             "scenario2",
+            "scenario3",
+            "scenario4",
         ],
     )
     config = {
@@ -64,16 +66,15 @@ def run(ceph_cluster, **kw):
         "pool_obj": pool_obj,
         "tiebreaker_mon_site_name": tiebreaker_mon_site_name,
         "stretch_bucket": stretch_bucket,
+        "client_node": client_node,
     }
     try:
 
         revert_stretch_mode_scenarios = RevertStretchModeScenarios(**config)
 
-        if "scenario1" in scenarios_to_run:
-            revert_stretch_mode_scenarios.scenario1(client_node=client_node)
-
-        if "scenario2" in scenarios_to_run:
-            revert_stretch_mode_scenarios.scenario2(client_node=client_node)
+        for scenario in scenarios_to_run:  # ["scenario1", "scenario2", "scenario3"]
+            # Dynamically call method based of RevertStretchModeScenarios class
+            methodcaller(scenario)(revert_stretch_mode_scenarios)
 
     except Exception as e:
         log.error(f"Failed with exception: {e.__doc__}")
@@ -126,7 +127,7 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
 
     """
 
-    def scenario1(self, client_node: CephNode):
+    def scenario1(self):
         """
         Scenario 1:- Revert stretch mode from health stretch cluster to default crush rules
         Steps:-
@@ -149,7 +150,7 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
 
         log.info("Step 2 -> Create a pool and write IO")
         pool_name = "revert_scenario_1_pool"
-        self.create_pool_and_write_io(pool_name, client_node=client_node)
+        self.create_pool_and_write_io(pool_name, client_node=self.client_node)
 
         log.info("Step 3 ->  Revert from healthy stretch mode")
         self.revert_stretch_mode()
@@ -189,7 +190,7 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
         self.enable_stretch_mode(self.tiebreaker_mon)
         wait_for_clean_pg_sets(rados_obj=self.rados_obj)
 
-    def scenario2(self, client_node: CephNode):
+    def scenario2(self):
         """
         Scenario 2:- Revert stretch mode from health stretch cluster to non-default crush rules
         Steps:-
@@ -201,7 +202,7 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
         6) Validate stretch mode related configs are reset in OSD map
         7) Validate stretch mode related configs are reset in MON map
         8) Validate PGs reach active+clean
-        9) Re-enter stretch mode for next scenario
+        9) Re-enter stretch mode for next scenario and wait for active+clean PG
         """
         log.info(self.scenario2.__doc__)
         log.info("Step 1 -> Check stretch mode is enabled")
@@ -213,7 +214,7 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
 
         log.info("Step 2 ->  Create a pool and write IO")
         pool_name = "revert_scenario_2_pool"
-        self.create_pool_and_write_io(pool_name, client_node=client_node)
+        self.create_pool_and_write_io(pool_name, client_node=self.client_node)
 
         log.info("Step 3 ->  Create a custom crush rule")
         custom_crush_rule_name = "test_rule"
@@ -255,6 +256,159 @@ class RevertStretchModeScenarios(RevertStretchModeFunctionalities):
 
         log.info(
             "Step 9 ->  Re-enter stretch mode for next scenario and wait till PGs are active+clean"
+        )
+        self.enable_stretch_mode(self.tiebreaker_mon)
+        wait_for_clean_pg_sets(rados_obj=self.rados_obj)
+
+    def scenario3(self):
+        """
+        Scenario 3:- Revert from netsplit scenario to default crush rule
+        Steps:-
+        1) Check stretch mode is enabled
+        2) Create a pool and write IO
+        3) Simulate a network partition between DC1 and DC2
+        4) Revert from degraded stretch mode
+        5) Validate all pools are reverted to default rules
+        6) Validate stretch mode related configs are reset in OSD map
+        7) Validate stretch mode related configs are reset in MON map
+        8) Remove the simulated network partition
+        9) Validate PGs reach active+clean
+        10) Re-enter stretch mode for next scenario and wait for active+clean PG
+        """
+        log.info(self.scenario3.__doc__)
+        log.info("Step 1 -> Check stretch mode is enabled")
+        if not stretch_enabled_checks(self.rados_obj):
+            log.error(
+                "The cluster has not cleared the pre-checks to run stretch tests. Exiting..."
+            )
+            raise Exception("Test pre-execution checks failed")
+
+        log.info("Step 2 ->  Create a pool and write IO")
+        pool_name = "revert_scenario_3_pool"
+        self.create_pool_and_write_io(pool_name, client_node=self.client_node)
+
+        log.info("Step 3 ->  Simulate a network partition between DC1 and DC2")
+        dc_1_hosts = self.site_1_hosts
+        dc_2_hosts = self.site_2_hosts
+        self.simulate_netsplit_between_hosts(dc_1_hosts, dc_2_hosts)
+
+        log.info("Step 4 ->  Revert from healthy stretch mode")
+        self.revert_stretch_mode()
+
+        log.info("Step 5 -> validate pool configurations are reset")
+        expected_pool_properties = {
+            "size": "3",
+            "min_size": "2",
+            "crush_rule": 0,  # default crush rule has a rule id 0
+        }
+        self.validate_pool_configurations_post_revert(expected_pool_properties)
+
+        log.info("Step 6 -> validate osd configurations are reset")
+        expected_osd_map_values = {
+            "stretch_mode_enabled": False,
+            "stretch_bucket_count": 0,
+            "degraded_stretch_mode": 0,
+            "recovering_stretch_mode": 0,
+            "stretch_mode_bucket": 0,
+        }
+        self.validate_osd_configurations_post_revert(expected_osd_map_values)
+
+        log.info("Step 7 -> validate mon configurations are reset")
+        expected_mon_map_values = {
+            "tiebreaker_mon": "",
+            "stretch_mode": False,
+            "tiebreaker_mon": "",
+        }
+        self.validate_mon_configurations_post_revert(expected_mon_map_values)
+
+        log.info("Step 8 -> Remove the simulated network partition")
+        self.flush_ip_table_rules_on_all_hosts()
+
+        log.info("Step 9 -> validate PG's reached active+clean")
+        wait_for_clean_pg_sets(rados_obj=self.rados_obj)
+
+        log.info(
+            "Step 10 ->  Re-enter stretch mode for next scenario and wait till PGs are active+clean"
+        )
+        self.enable_stretch_mode(self.tiebreaker_mon)
+        wait_for_clean_pg_sets(rados_obj=self.rados_obj)
+
+    def scenario4(self):
+        """
+        Scenario 4:- Revert from netsplit scenario to custom crush rule
+        Steps:-
+        1) Check stretch mode is enabled
+        2) Create a pool and write IO
+        3) Create a custom crush rule
+        4) Simulate a network partition between DC1 and DC2
+        5) Revert from degraded stretch mode
+        6) Validate all pools are reverted to default rules
+        7) Validate stretch mode related configs are reset in OSD map
+        8) Validate stretch mode related configs are reset in MON map
+        9) Remove the simulated network partition
+        10) Validate PGs reach active+clean
+        11) Re-enter stretch mode for next scenario and wait for active+clean PG
+        """
+        log.info(self.scenario3.__doc__)
+        log.info("Step 1 -> Check stretch mode is enabled")
+        if not stretch_enabled_checks(self.rados_obj):
+            log.error(
+                "The cluster has not cleared the pre-checks to run stretch tests. Exiting..."
+            )
+            raise Exception("Test pre-execution checks failed")
+
+        log.info("Step 2 ->  Create a pool and write IO")
+        pool_name = "revert_scenario_3_pool"
+        self.create_pool_and_write_io(pool_name, client_node=self.client_node)
+
+        log.info("Step 3 ->  Create a custom crush rule")
+        custom_crush_rule_name = "test_rule"
+        custom_crush_rule_id = self.create_or_retrieve_crush_rule(
+            crush_rule_name=custom_crush_rule_name
+        )
+
+        log.info("Step 4 ->  Simulate a network partition between DC1 and DC2")
+        dc_1_hosts = self.site_1_hosts
+        dc_2_hosts = self.site_2_hosts
+        self.simulate_netsplit_between_hosts(dc_1_hosts, dc_2_hosts)
+
+        log.info("Step 5 ->  Revert from healthy stretch mode")
+        self.revert_stretch_mode(crush_rule_name=custom_crush_rule_name)
+
+        log.info("Step 6 -> validate pool configurations are reset")
+        expected_pool_properties = {
+            "size": "3",
+            "min_size": "2",
+            "crush_rule": custom_crush_rule_id,
+        }
+        self.validate_pool_configurations_post_revert(expected_pool_properties)
+
+        log.info("Step 7 -> validate osd configurations are reset")
+        expected_osd_map_values = {
+            "stretch_mode_enabled": False,
+            "stretch_bucket_count": 0,
+            "degraded_stretch_mode": 0,
+            "recovering_stretch_mode": 0,
+            "stretch_mode_bucket": 0,
+        }
+        self.validate_osd_configurations_post_revert(expected_osd_map_values)
+
+        log.info("Step 8 -> validate mon configurations are reset")
+        expected_mon_map_values = {
+            "tiebreaker_mon": "",
+            "stretch_mode": False,
+            "tiebreaker_mon": "",
+        }
+        self.validate_mon_configurations_post_revert(expected_mon_map_values)
+
+        log.info("Step 9 -> Remove the simulated network partition")
+        self.flush_ip_table_rules_on_all_hosts()
+
+        log.info("Step 10 -> validate PG's reached active+clean")
+        wait_for_clean_pg_sets(rados_obj=self.rados_obj)
+
+        log.info(
+            "Step 11 ->  Re-enter stretch mode for next scenario and wait till PGs are active+clean"
         )
         self.enable_stretch_mode(self.tiebreaker_mon)
         wait_for_clean_pg_sets(rados_obj=self.rados_obj)
