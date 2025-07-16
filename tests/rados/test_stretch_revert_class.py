@@ -215,6 +215,88 @@ class StretchMode:
             time.sleep(20)
         log.info("Completed flushing IP table rules on all hosts")
 
+    def shutdown_hosts(self, hosts):
+        """
+        Method to shutdown the passed list of hosts.
+        Args:
+            hosts: (type: List) List of hostnames to shutdown.
+
+        Returns:
+            None
+        """
+
+    def write_io_and_validate_objects(self, pool_name:str, init_objects:int):
+        """
+
+        Args:
+            init_objects:
+
+        Returns:
+
+        """
+        log_msg = (f"\n Writing IO to the pool {pool_name}."
+                   f"\n init_objects -> {init_objects}")
+        log.info(log_msg)
+
+        if (
+            self.pool_obj.do_rados_put(
+                client=self.client_node, pool=pool_name, nobj=200, timeout=100
+            )
+            == 1
+        ):
+            err_msg = f"Failed to write IO using rados put command to pool {pool_name}"
+            log.error(err_msg)
+            raise Exception(err_msg)
+
+        log.debug("sleeping for 20 seconds for the objects to be displayed in ceph df")
+        time.sleep(20)
+
+        pool_stat = self.rados_obj.get_cephdf_stats(pool_name=pool_name)
+        current_objects = pool_stat["stats"]["objects"]
+        log.debug(pool_stat)
+
+        # Objects should be more than the initial no of objects
+        if current_objects <= init_objects:
+            log.error(
+                "Write ops should be possible, number of objects in the pool has not changed"
+            )
+            raise Exception(
+                f"Pool {pool_name} has {pool_stat['stats']['objects']} objs"
+            )
+        log_msg = (f"\n Post IO to the pool {pool_name}."
+                   f"\n init_objects -> {init_objects}"
+                   f"\n current_objects -> {current_objects}")
+        log.info(log_msg)
+
+    def validate_health_warnings(self, expected_health_warns:list):
+        """
+
+        Returns:
+
+        """
+        status_report = self.rados_obj.run_ceph_command(
+            cmd="ceph report", client_exec=True
+        )
+        ceph_health_status = list(status_report["health"]["checks"].keys())
+        if not all(elem in ceph_health_status for elem in expected_health_warns):
+            err_msg = (f"We do not have the expected health warnings generated on the cluster.\n"
+                       f"Warns on cluster : {ceph_health_status}\n"
+                       f"Expected Warnings : {expected_health_warns}\n")
+            log.error(err_msg)
+
+        log.info(
+            f"The expected health warnings are generated on the cluster. Warnings : {ceph_health_status}"
+        )
+
+    def is_degraded_stretch_mode(self):
+        """"""
+        stretch_details = self.rados_obj.get_stretch_mode_dump()
+        if not stretch_details["degraded_stretch_mode"]:
+            log.error(
+                f"Stretch Cluster is not marked as degraded even though we have DC down : {stretch_details}"
+            )
+            return False
+        return True
 
 class RevertStretchModeFunctionalities(StretchMode):
     """

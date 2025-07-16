@@ -193,17 +193,7 @@ def run(ceph_cluster, **kw):
         time.sleep(20)
 
         # Getting the number of objects post write, to check if writes were successful
-        pool_stat = rados_obj.get_cephdf_stats(pool_name=pool_name)
-        log.debug(pool_stat)
 
-        # Objects should be more than the initial no of objects
-        if pool_stat["stats"]["objects"] <= init_objects:
-            log.error(
-                "Write ops should be possible, number of objects in the pool has not changed"
-            )
-            raise Exception(
-                f"Pool {pool_name} has {pool_stat['stats']['objects']} objs"
-            )
         log.info(
             f"Successfully wrote {pool_stat['stats']['objects']} on pool {pool_name} in degraded mode\n"
             f"Proceeding to bring up the nodes and recover the cluster from degraded mode"

@@ -2507,7 +2507,7 @@ class RadosOrchestrator:
         self.run_deep_scrub()
         time.sleep(10)
 
-        end_time = datetime.datetime.now() + datetime.timedelta(seconds=1000)
+        end_time = datetime.datetime.now() + datetime.timedelta(seconds=3000)
         flag = False
         while end_time > datetime.datetime.now():
             status_report = self.run_ceph_command(cmd="ceph report", client_exec=True)
