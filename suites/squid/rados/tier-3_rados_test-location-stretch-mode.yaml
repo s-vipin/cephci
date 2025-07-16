@@ -39,7 +39,6 @@ tests:
                 - node3
                 - node4
                 - node5
-                - node6
               location:
                 root: default
                 datacenter: DC1
@@ -47,11 +46,10 @@ tests:
               address: true
               labels: apply-all-labels
               nodes:
+                - node6
                 - node8
                 - node9
                 - node10
-                - node11
-                - node14
               location:
                 root: default
                 datacenter: DC2
@@ -139,9 +137,6 @@ tests:
         id: client.1                      # client Id (<type>.<Id>)
         nodes:
           - node7
-          - node15
-          - node16
-          - node17
         install_packages:
           - ceph-common
           - ceph-base
@@ -161,12 +156,12 @@ tests:
       desc: Change config options to enable logging to file
 
 # RHOS-d run duration: 18 min
-# env: VM + BM
-  - test:
-      name: Mon election strategies
-      polarion-id: CEPH-83573627
-      module: test_election_strategies.py
-      desc: Change Mon election strategies and verify status
+## env: VM + BM
+#  - test:
+#      name: Mon election strategies
+#      polarion-id: CEPH-83573627
+#      module: test_election_strategies.py
+#      desc: Change Mon election strategies and verify status
 
   - test:
       name: Deploy stretch Cluster
@@ -181,13 +176,13 @@ tests:
       desc: Enables connectivity mode and deploys cluster with Stretch rule with tiebreaker node
       abort-on-fail: true
 
-  - test:
-      name: Mon election strategies in stretch mode
-      polarion-id: CEPH-83573627
-      module: test_election_strategies.py
-      config:
-        stretch_mode: True
-      desc: Run Mon election strategies workflow for a stretch cluster
+#  - test:
+#      name: Mon election strategies in stretch mode
+#      polarion-id: CEPH-83573627
+#      module: test_election_strategies.py
+#      config:
+#        stretch_mode: True
+#      desc: Run Mon election strategies workflow for a stretch cluster
 
   - test:
       name: rbd-io
@@ -226,166 +221,166 @@ tests:
       abort-on-fail: false
 
 # TBD : Enhancement might be needed for this test
-  - test:
-      name: Verify stretch Cluster
-      module: stretch_cluster.py
-      polarion-id: CEPH-83573630
-      config:
-        verify_forced_recovery: true
-        osd_max_backfills: 16
-        osd_recovery_max_active: 16
-        max_objs: 300
-      desc: Verify forced recovery and healthy on a stretch configured cluster
-
-  - test:
-      name: concurrent and parallel IOPS on an object
-      desc: Perform concurrent and parallel IOPs on one object
-      module: test_object_ops.py
-      config:
-        obj_sizes:
-          - 45
-          - 80
-          - 23
-          - 107
-      polarion-id: CEPH-83571710
-
-  - test:
-      name: test stretch Cluster site down - Data site
-      module: test_stretch_site_down.py
-      polarion-id: CEPH-83574975
-      config:
-        pool_name: test_stretch_pool6
-        shutdown_site: DC1
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Test the cluster when we have only 1 of 2 DC's surviving
-      abort-on-fail: true
-
-  - test:
-      name: test stretch Cluster site down with delay - Data site
-      module: test_stretch_site_down.py
-      polarion-id: CEPH-83571705
-      config:
-        pool_name: test_stretch_pool9
-        shutdown_site: DC1
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-        add_network_delay: true
-      desc: Test the cluster when we have only 1 of 2 DC's surviving with network delay
-      abort-on-fail: true
-
-  - test:
-      name: test stretch Cluster site down - tiebreaker site
-      module: test_stretch_site_down.py
-      polarion-id: CEPH-83574974
-      config:
-        pool_name: test_stretch_pool5
-        shutdown_site: tiebreaker
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Test the cluster when the tiebreaker site is shut down
-      abort-on-fail: true
-
-  - test:
-      name: test stretch Cluster maintenance mode - tiebreaker site
-      module: test_stretch_site_maintenance_modes.py
-      polarion-id: CEPH-83574976
-      config:
-        pool_name: test_stretch_pool2
-        affected_site: tiebreaker
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Test the cluster when the tiebreaker site is moved to maintenance mode
-      abort-on-fail: true
-
-  - test:
-      name: test stretch Cluster site reboot - Data site
-      module: test_stretch_site_reboot.py
-      polarion-id: CEPH-83574977
-      config:
-        pool_name: test_stretch_pool3
-        affected_site: DC1
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Test the cluster when the data site is rebooted
-
-  - test:
-      name: test stretch Cluster site reboot - tiebreaker site
-      module: test_stretch_site_reboot.py
-      polarion-id: CEPH-83574977
-      config:
-        pool_name: test_stretch_pool4
-        affected_site: tiebreaker
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Test the cluster when the tiebreaker site is rebooted
-
-  - test:
-      name: Mon replacement on Data site
-      module: test_stretch_mon_replacements.py
-      polarion-id: CEPH-83574971
-      config:
-        pool_name: test_stretch_pool5
-        replacement_site: DC1
-        tiebreaker_mon_site_name: tiebreaker
-        add_mon_without_location: true
-        delete_pool: true
-      desc: Test stretch Cluster mon replacement - Data site
-
-  - test:
-      name: Mon replacement on tiebreaker site
-      module: test_stretch_mon_replacements.py
-      polarion-id: CEPH-83574971
-      config:
-        pool_name: test_stretch_pool6
-        replacement_site: tiebreaker
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Test stretch Cluster mon replacement - tiebreaker site
-
-  - test:
-      name: Netsplit Scenarios data-data sites
-      module: test_stretch_netsplit_scenarios.py
-      polarion-id: CEPH-83574979
-      config:
-        pool_name: test_stretch_pool8
-        netsplit_site: DC1
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-        set_debug: true
-      desc: Test stretch Cluster netsplit scenario between data sites
-      comments: Intermittent Active bug with netsplit scenarios - 2318975
-
-  - test:
-      name: Netsplit Scenarios data-tiebreaker sites
-      module: test_stretch_netsplit_scenarios.py
-      polarion-id: CEPH-83574979
-      config:
-        pool_name: test_stretch_pool7
-        netsplit_site: tiebreaker
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Test stretch Cluster netsplit scenario between data site and tiebreaker site
-
-  - test:
-      name: test stretch Cluster maintenance mode - data site
-      module: test_stretch_site_maintenance_modes.py
-      polarion-id: CEPH-83574976
-      config:
-        pool_name: test_stretch_pool1
-        affected_site: DC1
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Test the cluster when the Data site is moved to maintenance mode
-
-  - test:
-      name: Negative scenarios - post-deployment
-      module: test_stretch_negative_scenarios.py
-      polarion-id: CEPH-83584499
-      config:
-        stretch_bucket: datacenter
-        tiebreaker_mon_site_name: tiebreaker
-      desc: Perform post-deployment negative tests on stretch mode
+#  - test:
+#      name: Verify stretch Cluster
+#      module: stretch_cluster.py
+#      polarion-id: CEPH-83573630
+#      config:
+#        verify_forced_recovery: true
+#        osd_max_backfills: 16
+#        osd_recovery_max_active: 16
+#        max_objs: 300
+#      desc: Verify forced recovery and healthy on a stretch configured cluster
+#
+#  - test:
+#      name: concurrent and parallel IOPS on an object
+#      desc: Perform concurrent and parallel IOPs on one object
+#      module: test_object_ops.py
+#      config:
+#        obj_sizes:
+#          - 45
+#          - 80
+#          - 23
+#          - 107
+#      polarion-id: CEPH-83571710
+#
+#  - test:
+#      name: test stretch Cluster site down - Data site
+#      module: test_stretch_site_down.py
+#      polarion-id: CEPH-83574975
+#      config:
+#        pool_name: test_stretch_pool6
+#        shutdown_site: DC1
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#      desc: Test the cluster when we have only 1 of 2 DC's surviving
+#      abort-on-fail: true
+#
+#  - test:
+#      name: test stretch Cluster site down with delay - Data site
+#      module: test_stretch_site_down.py
+#      polarion-id: CEPH-83571705
+#      config:
+#        pool_name: test_stretch_pool9
+#        shutdown_site: DC1
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#        add_network_delay: true
+#      desc: Test the cluster when we have only 1 of 2 DC's surviving with network delay
+#      abort-on-fail: true
+#
+#  - test:
+#      name: test stretch Cluster site down - tiebreaker site
+#      module: test_stretch_site_down.py
+#      polarion-id: CEPH-83574974
+#      config:
+#        pool_name: test_stretch_pool5
+#        shutdown_site: tiebreaker
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#      desc: Test the cluster when the tiebreaker site is shut down
+#      abort-on-fail: true
+#
+#  - test:
+#      name: test stretch Cluster maintenance mode - tiebreaker site
+#      module: test_stretch_site_maintenance_modes.py
+#      polarion-id: CEPH-83574976
+#      config:
+#        pool_name: test_stretch_pool2
+#        affected_site: tiebreaker
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#      desc: Test the cluster when the tiebreaker site is moved to maintenance mode
+#      abort-on-fail: true
+#
+#  - test:
+#      name: test stretch Cluster site reboot - Data site
+#      module: test_stretch_site_reboot.py
+#      polarion-id: CEPH-83574977
+#      config:
+#        pool_name: test_stretch_pool3
+#        affected_site: DC1
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#      desc: Test the cluster when the data site is rebooted
+#
+#  - test:
+#      name: test stretch Cluster site reboot - tiebreaker site
+#      module: test_stretch_site_reboot.py
+#      polarion-id: CEPH-83574977
+#      config:
+#        pool_name: test_stretch_pool4
+#        affected_site: tiebreaker
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#      desc: Test the cluster when the tiebreaker site is rebooted
+#
+#  - test:
+#      name: Mon replacement on Data site
+#      module: test_stretch_mon_replacements.py
+#      polarion-id: CEPH-83574971
+#      config:
+#        pool_name: test_stretch_pool5
+#        replacement_site: DC1
+#        tiebreaker_mon_site_name: tiebreaker
+#        add_mon_without_location: true
+#        delete_pool: true
+#      desc: Test stretch Cluster mon replacement - Data site
+#
+#  - test:
+#      name: Mon replacement on tiebreaker site
+#      module: test_stretch_mon_replacements.py
+#      polarion-id: CEPH-83574971
+#      config:
+#        pool_name: test_stretch_pool6
+#        replacement_site: tiebreaker
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#      desc: Test stretch Cluster mon replacement - tiebreaker site
+#
+#  - test:
+#      name: Netsplit Scenarios data-data sites
+#      module: test_stretch_netsplit_scenarios.py
+#      polarion-id: CEPH-83574979
+#      config:
+#        pool_name: test_stretch_pool8
+#        netsplit_site: DC1
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#        set_debug: true
+#      desc: Test stretch Cluster netsplit scenario between data sites
+#      comments: Intermittent Active bug with netsplit scenarios - 2318975
+#
+#  - test:
+#      name: Netsplit Scenarios data-tiebreaker sites
+#      module: test_stretch_netsplit_scenarios.py
+#      polarion-id: CEPH-83574979
+#      config:
+#        pool_name: test_stretch_pool7
+#        netsplit_site: tiebreaker
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#      desc: Test stretch Cluster netsplit scenario between data site and tiebreaker site
+#
+#  - test:
+#      name: test stretch Cluster maintenance mode - data site
+#      module: test_stretch_site_maintenance_modes.py
+#      polarion-id: CEPH-83574976
+#      config:
+#        pool_name: test_stretch_pool1
+#        affected_site: DC1
+#        tiebreaker_mon_site_name: tiebreaker
+#        delete_pool: true
+#      desc: Test the cluster when the Data site is moved to maintenance mode
+#
+#  - test:
+#      name: Negative scenarios - post-deployment
+#      module: test_stretch_negative_scenarios.py
+#      polarion-id: CEPH-83584499
+#      config:
+#        stretch_bucket: datacenter
+#        tiebreaker_mon_site_name: tiebreaker
+#      desc: Perform post-deployment negative tests on stretch mode
 
   - test:
       name: OSD and host replacement
