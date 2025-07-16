@@ -113,27 +113,3 @@ globals:
           - osd-bak
         no-of-volumes: 4
         disk-size: 15
-      node14:
-        networks:
-          - provider_net_cci_15
-        role:
-          - rgw
-          - mds
-          - osd
-        no-of-volumes: 4
-        disk-size: 15
-      node15:
-        networks:
-          - provider_net_cci_16
-        role:
-          - client
-      node16:
-        networks:
-          - provider_net_cci_13
-        role:
-          - client
-      node17:
-        networks:
-          - provider_net_cci_13
-        role:
-          - client
