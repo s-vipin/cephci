@@ -296,7 +296,16 @@ def run(ceph_cluster, **kw):
             + f"Inconsistent count before test:{obj_count}\n"
             + f"Inconsistent count after test:{no_of_inconsistent_objects}"
         )
+
+        out = get_pg_inconsistent_object_count(rados_obj, pg_id)
+        log.info("OBJ COUNT before seeting noscrub: ")
+        log.info(out)
         scrub_object.set_osd_flags("set", "noscrub")
+        log.info("Sleeping for 30 seconds.")
+        time.sleep(30)
+        out = get_pg_inconsistent_object_count(rados_obj, pg_id)
+        log.info("OBJ COUNT after seeting noscrub: ")
+        log.info(out)
         log.info("Scenario3: noscrub flag is set")
         log.info(
             "====VERIFICATION OF THE TESTS BY PERFORMING SCRUB OPERATIONS ARE COMPLETED===="
@@ -501,6 +510,9 @@ def run(ceph_cluster, **kw):
             log.info("deleted the pool successfully")
         set_ecpool_inconsistent_default_param_value(mon_obj, scrub_object)
         time.sleep(30)
+        if rados_obj.check_crash_status():
+            log.error("Test failed due to crash at the end of test")
+            return 1
         # log cluster health
         rados_obj.log_cluster_health()
     return 0
