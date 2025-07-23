@@ -152,6 +152,12 @@ class StretchMode:
         Returns:
             None
         """
+        if len(group1) == 0:
+            raise Exception("Group 1 hosts list is empty")
+
+        if len(group2) == 0:
+            raise Exception("Group 2 hosts list is empty")
+
         info_msg = f"Adding IPtable rules between {group1} and {group2}"
         log.info(info_msg)
 
