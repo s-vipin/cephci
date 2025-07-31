@@ -20,6 +20,7 @@ from tests.rados.stretch_cluster import wait_for_clean_pg_sets
 from tests.rados.test_stretch_revert_class import RevertStretchModeFunctionalities, StretchMode
 from tests.rados.test_stretch_site_down import stretch_enabled_checks
 from utility.log import Log
+from utility.retry import retry
 from utility.utils import generate_unique_id
 
 log = Log(__name__)
@@ -73,36 +74,85 @@ def run(ceph_cluster, **kw):
 
         if "scenario1" in scenarios_to_run:
             log.info("Scenario 1 -> Netsplit in stretch mode within same crush bucket")
-            group_1_hosts = random.choice(dc_1_hosts)
+            group_1_hosts = list()
+            group_2_hosts = list()
+
+            if not stretch_enabled_checks(rados_obj):
+                log.error(
+                    "The cluster has not cleared the pre-checks to run stretch tests. Exiting..."
+                )
+                raise Exception("Test pre-execution checks failed")
+
+            random_host = random.choice(dc_1_hosts)
+            group_1_hosts.append(random_host)
+
             # selecting hosts which are not in group1
-            group_2_hosts = random.choice(list(set(dc_1_hosts) - set(group_1_hosts)))
+            random_host = random.choice(list(set(dc_1_hosts) - set(group_1_hosts)))
+            group_2_hosts.append(random_host)
 
             # generate netsplit, check warnings and remove the netsplits
+            log_info_msg = (f"Group 1 hosts -> {group_1_hosts}"
+                            f"Group 2 hosts -> {group_2_hosts}")
+            log.info(log_info_msg)
             stretch_mode.simulate_netsplit_between_hosts(group_1_hosts, group_2_hosts)
             check_individual_netsplit_warning(rados_obj, group_1_hosts, group_2_hosts)
             stretch_mode.flush_ip_table_rules_on_all_hosts()
+            wait_for_clean_pg_sets(rados_obj=rados_obj)
 
         if "scenario2" in scenarios_to_run:
             log.info("Scenario 2 -> Netsplit in stretch mode across crush bucket")
-            group_1_hosts = random.choice(dc_1_hosts)
+            group_1_hosts = list()
+            group_2_hosts = list()
+
+            if not stretch_enabled_checks(rados_obj):
+                log.error(
+                    "The cluster has not cleared the pre-checks to run stretch tests. Exiting..."
+                )
+                raise Exception("Test pre-execution checks failed")
+
+            random_host = random.choice(dc_1_hosts)
+            group_1_hosts.append(random_host)
+
             # selecting hosts which are not in group1
-            group_2_hosts = random.choice(dc_2_hosts)
+            random_host = random.choice(dc_2_hosts)
+            group_2_hosts.append(random_host)
 
             # generate netsplit, check warnings and remove the netsplits
+            log_info_msg = (f"Group 1 hosts -> {group_1_hosts}"
+                            f"Group 2 hosts -> {group_2_hosts}")
+            log.info(log_info_msg)
             stretch_mode.simulate_netsplit_between_hosts(group_1_hosts, group_2_hosts)
             check_individual_netsplit_warning(rados_obj, group_1_hosts, group_2_hosts)
             stretch_mode.flush_ip_table_rules_on_all_hosts()
+            wait_for_clean_pg_sets(rados_obj=rados_obj)
 
         if "scenario3" in scenarios_to_run:
-            log.info("Scenario 2 -> Netsplit in stretch mode across crush bucket")
-            group_1_hosts = random.choice(dc_1_hosts)
-            # selecting hosts which are not in group1
-            group_2_hosts = random.choice(dc_2_hosts)
+            log.info("Scenario 3 -> Netsplit in stretch mode across crush bucket between more than 1 MON")
+            group_1_hosts = list()
+            group_2_hosts = list()
+
+            if not stretch_enabled_checks(rados_obj):
+                log.error(
+                    "The cluster has not cleared the pre-checks to run stretch tests. Exiting..."
+                )
+                raise Exception("Test pre-execution checks failed")
+
+            random_host = random.choice(dc_1_hosts)
+            group_1_hosts.append(random_host)
+
+            # selecting more than 1 host from DC2
+            for _ in range(2):
+                random_host = random.choice(list(set(dc_2_hosts)-set(group_2_hosts)))
+                group_2_hosts.append(random_host)
 
             # generate netsplit, check warnings and remove the netsplits
+            log_info_msg = (f"Group 1 hosts -> {group_1_hosts}"
+                            f"Group 2 hosts -> {group_2_hosts}")
+            log.info(log_info_msg)
             stretch_mode.simulate_netsplit_between_hosts(group_1_hosts, group_2_hosts)
             check_individual_netsplit_warning(rados_obj, group_1_hosts, group_2_hosts)
             stretch_mode.flush_ip_table_rules_on_all_hosts()
+            wait_for_clean_pg_sets(rados_obj=rados_obj)
 
 
     except Exception as e:
@@ -131,6 +181,7 @@ def run(ceph_cluster, **kw):
     log.info("All the tests completed on the cluster, Pass!!!")
     return 0
 
+@retry((Exception), backoff=1, tries=3, delay=20)
 def check_individual_netsplit_warning(rados_obj: RadosOrchestrator, group_1:list, group_2:list):
     # [root @ depressa010 ~]  # ceph health detail -fjson-pretty
     #
