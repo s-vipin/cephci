@@ -155,7 +155,11 @@ tests:
       config:
         command: add
         id: client.1                      # client Id (<type>.<Id>)
-        node: node10
+        nodes:
+            # added as a workaround due to ceph-common, ceph-base package
+            # installation issue in tentacle
+            - node10:
+                release: 8
         install_packages:
           - ceph-common
           - ceph-base
@@ -299,3 +303,19 @@ tests:
         rule_name: 3az_rule
       desc: Test stretch Cluster netsplit scenario between data site and tiebreaker site
       comments: Bugzilla for feature 2318936, 2316900
+
+  - test:
+      name: Netsplit detection and warning
+      module: test_3az_netsplit_detection_and_warning.py
+      polarion-id: CEPH-83620057
+      config:
+        stretch_bucket: datacenter
+        tiebreaker_mon_site_name: tiebreaker
+        delete_pool: true
+        scenarios_to_run:
+          - scenario1
+          - scenario2
+          - scenario3
+          - scenario4
+          - scenario5
+      desc: Netsplit detection and warning in stretch mode

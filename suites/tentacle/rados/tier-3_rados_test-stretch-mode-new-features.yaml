@@ -154,12 +154,6 @@ tests:
             # installation issue in tentacle
             - node7:
                 release: 8
-            - node15:
-                release: 8
-            - node16:
-                release: 8
-            - node17:
-                release: 8
         install_packages:
           - ceph-common
           - ceph-base
@@ -254,7 +248,7 @@ tests:
           - scenario3
           - scenario4
       desc: Performs tests related to reverting from stretch mode
-
+#
   - test:
       name: Revert stretch mode site down scenarios
       module: test_stretch_revert.py
@@ -266,3 +260,22 @@ tests:
         scenarios_to_run:
           - scenario5
       desc: Performs tests related to reverting from stretch mode
+
+  - test:
+      name: Netsplit detection and warning
+      module: test_netsplit_detection_and_warning.py
+      polarion-id: CEPH-83620057
+      config:
+        stretch_bucket: datacenter
+        tiebreaker_mon_site_name: tiebreaker
+        delete_pool: true
+        scenarios_to_run:
+          - scenario1
+          - scenario2
+          - scenario3
+          - scenario4
+          - scenario5
+          - scenario6
+          - scenario7
+          - scenario8
+      desc: Netsplit detection and warning in stretch mode

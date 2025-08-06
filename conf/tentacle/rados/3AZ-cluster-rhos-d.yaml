@@ -5,8 +5,6 @@ globals:
   - ceph-cluster:
       name: ceph
       node1:
-        networks:
-          - provider_net_cci_15
         role:
           - _admin
           - mon
@@ -19,8 +17,6 @@ globals:
         no-of-volumes: 4
         disk-size: 15
       node2:
-        networks:
-          - provider_net_cci_15
         role:
           - mon
           - mgr
@@ -29,8 +25,6 @@ globals:
         no-of-volumes: 4
         disk-size: 15
       node3:
-        networks:
-          - provider_net_cci_15
         role:
           - osd
           - mon
@@ -38,8 +32,6 @@ globals:
         no-of-volumes: 4
         disk-size: 15
       node4:
-        networks:
-          - provider_net_cci_13
         role:
           - _admin
           - mon
@@ -51,8 +43,6 @@ globals:
         no-of-volumes: 4
         disk-size: 15
       node5:
-        networks:
-          - provider_net_cci_13
         role:
           - mon
           - mgr
@@ -61,8 +51,6 @@ globals:
         no-of-volumes: 4
         disk-size: 15
       node6:
-        networks:
-          - provider_net_cci_13
         role:
           - osd
           - mon
@@ -70,8 +58,6 @@ globals:
         no-of-volumes: 4
         disk-size: 15
       node7:
-        networks:
-          - provider_net_cci_16
         role:
           - _admin
           - mon
@@ -83,8 +69,6 @@ globals:
         no-of-volumes: 4
         disk-size: 15
       node8:
-        networks:
-          - provider_net_cci_16
         role:
           - mon
           - mgr
@@ -93,8 +77,6 @@ globals:
         no-of-volumes: 4
         disk-size: 15
       node9:
-        networks:
-          - provider_net_cci_16
         role:
           - osd
           - mon
