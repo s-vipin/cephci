@@ -4714,7 +4714,7 @@ EOF"""
             )
 
         cmd_export = f"ceph orch ls {service_type} {service_name} --export"
-        _service = self.run_ceph_command(cmd=cmd_export, client_exec=True)[0]
+        _service = self.run_ceph_command(cmd=cmd_export, client_exec=True)
         if not _service.get("placement", False):
             log.warning(
                 "Service %s does not have placement entry and cannot be set to 'managed', skipping"
@@ -5255,6 +5255,10 @@ EOF"""
             current_service_type = service["service_type"]
             current_service_size = service["status"]["size"]
             current_service_name = service["service_name"]
+            log_debug_msg = (
+                f"\nservice name -> {current_service_name}" f"\nservice -> {service}"
+            )
+            log.debug(log_debug_msg)
             if (service_type is None and current_service_size == 0) or (
                 current_service_type == service_type and current_service_size == 0
             ):
@@ -5327,43 +5331,56 @@ EOF"""
         log.info(log_info_msg)
         return True
 
-    def lookup_log_message(
-        self, init_time, end_time, daemon_type, daemon_id, search_string
-    ):
+    def get_service_spec_daemons(self, service_name: str):
         """
-        This method is used to verify whether a specific string is present in the log.
-
+        Returns the ids of daemon part of service spec. Command `ceph orch ps --service-name <service-name>` is used
+        for the opreation.
         Args:
-            init_time : Initial time  in the log line
-            end_time : End time in the log line
-            daemon_type : Daemon types are- mon,mgr,osd,mds and rgw
-            daemon_id : daemon id
-            search_string : search string in the log
+            service_name: Example: osd.osds, osd.default
         Returns:
-            True -> If the search string exist in the log
-            False -> If the search string not exist in the log
+            List: list of daemons part of the service spec
+        Usage:
+            get_service_spec_daemons(service_name="osd.default") returns [3,1,2]
+             get_service_spec_daemons(service_name="mon") returns ["depressa007", "depressa008"]
         """
-        fsid = self.run_ceph_command(cmd="ceph fsid")["fsid"]
-        host = self.fetch_host_node(daemon_type=daemon_type, daemon_id=daemon_id)
-
-        base_cmd_get_log_line = (
-            f'awk \'$1 >= "{init_time}" && $1 <= "{end_time}"\' '
-            f"/var/log/ceph/{fsid}/ceph-{daemon_type}.{daemon_id}.log"
+        # $ceph orch ps --service-name osd.osd_spec -fjson-pretty
+        # [
+        #    {
+        #     "container_id": "f60959d13eff",
+        #     "container_image_digests": [
+        #         "quay.ceph.io/ceph-ci/ceph@sha256:8a4b10563247b88eab253c58da7d993c491c34a340f18ddd3f82f84653edb1b3"
+        #     ],
+        #     "container_image_id": "407e8c6551488dab2e9677a2762780c5df16d2a88cd82e27cecbf6095cc0e1ea",
+        #     "container_image_name": "quay.ceph.io/ceph-ci/ceph@sha256:8a4b10563247b88eab253c58da7d993c491c34a340f1",
+        #     "cpu_percentage": "1.40%",
+        #     "created": "2025-06-18T12:25:50.970306Z",
+        #     "daemon_id": "17",
+        #     "daemon_name": "osd.17",
+        #     "daemon_type": "osd",
+        #     "events": [
+        #         "2025-08-06T09:41:08.123978Z daemon:osd.17 [INFO] \"Reconfigured osd.17 on host 'depressa006'\""
+        #     ],
+        #     "hostname": "depressa006",
+        #     "is_active": false,
+        #     "last_refresh": "2025-08-07T03:07:05.198294Z",
+        #     "memory_request": 2635148574,
+        #     "memory_usage": 1653562408,
+        #     "pending_daemon_config": false,
+        #     "ports": [],
+        #     "service_name": "osd.osd_spec",
+        #     "started": "2025-08-05T13:21:41.788237Z",
+        #     "status": 1,
+        #     "status_desc": "running",
+        #     "systemd_unit": "ceph-b141fe32-4bee-11f0-8f36-ac1f6b5628fe@osd.17",
+        #     "version": "20.0.0-2453-ga40ac658"
+        # },
+        # .....<redacted>.....
+        ceph_orch_ps = self.run_ceph_command(
+            cmd=f"ceph orch ps --service_name {service_name}"
         )
-
-        grep_line = rf"grep -E {search_string}"
-        try:
-            base_cmd_get_log_line = f"{base_cmd_get_log_line} | {grep_line}"
-            chk_log_msg, err = host.exec_command(sudo=True, cmd=base_cmd_get_log_line)
-        except Exception:
-            msg_logline = "Exception occurred or message not found in the logs."
-            log.info(msg_logline)
-            return False
-        if chk_log_msg:
-            msg_logline = f"The log line {search_string} found on - {daemon_type} : {daemon_id} log"
-            log.info(msg_logline)
-            return True
-        else:
-            msg_logline = f"The log line {search_string} not found on - {daemon_type} : {daemon_id} log"
-            log.info(msg_logline)
-            return False
+        log_debug_msg = f"Daemons -> {ceph_orch_ps}"
+        log.debug(log_debug_msg)
+        daemons = list()
+        for daemon in ceph_orch_ps:
+            daemons.append(daemon["daemon_id"])
+        return daemons

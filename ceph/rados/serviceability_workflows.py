@@ -428,6 +428,15 @@ class ServiceabilityMethods:
             log.info(
                 "All OSDs part of list has been added to a managed OSD service. pass"
             )
+
+            if remove_empty_service_spec:
+                if (
+                    self.rados_obj.remove_empty_service_spec(service_type="osd")
+                    is False
+                ):
+                    log.info("Could not remove empty service spec")
+                    return False
+
             return True
 
         else:
