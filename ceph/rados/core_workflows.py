@@ -4945,7 +4945,7 @@ EOF"""
         self.client.exec_command(sudo=True, cmd=f"touch {file_name}")
 
         cmd_export = f"ceph orch ls {service_type} --export"
-        out = self.run_ceph_command(cmd=cmd_export, client_exec=True)
+        out = self.run_ceph_command(cmd=cmd_export, client_exec=True)[0]
         for _service in out:
             if not _service.get("placement", False):
                 log.info(
