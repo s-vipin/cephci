@@ -10,10 +10,12 @@ includes:
 """
 
 import random
+from abc import ABC, abstractmethod
 from collections import namedtuple
 
 from ceph.ceph_admin import CephAdmin
 from ceph.rados.core_workflows import RadosOrchestrator
+from ceph.rados.monitor_workflows import MonitorWorkflows
 from ceph.rados.pool_workflows import PoolFunctions
 from ceph.rados.serviceability_workflows import ServiceabilityMethods
 from cli.utilities.operations import wait_for_cluster_health
@@ -28,6 +30,7 @@ from tests.rados.test_stretch_revert_class import (
 from tests.rados.test_stretch_site_down import stretch_enabled_checks
 from utility.log import Log
 from utility.retry import retry
+from typing import List
 
 log = Log(__name__)
 
@@ -62,16 +65,22 @@ def run(ceph_cluster, **kw):
         "regular_cluster_with_mon_location", False
     )
     separator = "-" * 40
+    mon_obj = MonitorWorkflows(node=cephadm)
     scenarios_to_run = config.get("scenarios_to_run", [])
+
     config = {
         "rados_obj": rados_obj,
         "pool_obj": pool_obj,
         "tiebreaker_mon_site_name": tiebreaker_mon_site_name,
         "stretch_bucket": stretch_bucket,
         "client_node": client_node,
+        "mon_election_obj": mon_election_obj,
+        "mon_obj": mon_obj,
     }
-    try:
 
+    try:
+        netsplit_scenarios = NetsplitScenarios(**config)
+        stretch_mode = StretchMode(**config)
         STRETCH_MODE = False
         REGULAR_CLUSTER_WITH_MON_LOCATION = False
         NAZ_STRETCH_CLUSTER = False
@@ -87,9 +96,7 @@ def run(ceph_cluster, **kw):
             ]
             dc_names = [name["name"] for name in dc_buckets]
 
-        if regular_cluster_with_mon_location is False and stretch_enabled_checks(
-            rados_obj
-        ):
+        if stretch_enabled_checks(rados_obj):
             STRETCH_MODE = True
             logging_code = "Stretch Mode"
 
@@ -97,7 +104,7 @@ def run(ceph_cluster, **kw):
             NAZ_STRETCH_CLUSTER = True
             logging_code = "N-AZ"
 
-        elif regular_cluster_with_mon_location is True:
+        elif len(dc_names) == 2:
             REGULAR_CLUSTER_WITH_MON_LOCATION = True
             logging_code = "Regular cluster with mon crush location"
 
@@ -134,7 +141,7 @@ def run(ceph_cluster, **kw):
                     f"Hosts present in Datacenter : {site} : {getattr(all_hosts, site)}"
                     f"MON Hosts present in Datacenter : {site} : {stretch_site[i]}"
                 )
-            stretch_mode = StretchMode(**config)
+
             tiebreaker_hosts = stretch_mode.tiebreaker_hosts
 
         if REGULAR_CLUSTER_WITHOUT_MON_LOCATION:
@@ -157,6 +164,7 @@ def run(ceph_cluster, **kw):
             or STRETCH_MODE
             or REGULAR_CLUSTER_WITH_MON_LOCATION
             or NAZ_STRETCH_CLUSTER
+            or REGULAR_CLUSTER_WITHOUT_MON_LOCATION
         ):
             info_msg = (
                 f"\n{separator}"
@@ -164,42 +172,7 @@ def run(ceph_cluster, **kw):
                 f"\n{separator}"
             )
             log.info(info_msg)
-            group_1_hosts = list()
-            group_2_hosts = list()
-
-            # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
-            random_host = random.choice(stretch_site[0])
-            group_1_hosts.append(random_host)
-
-            # selecting hosts which are not in group1
-            random_host = random.choice(list(set(stretch_site[0]) - set(group_1_hosts)))
-            group_2_hosts.append(random_host)
-
-            log_debug = (
-                f"\nSelected mon hosts are"
-                f"\nDC1 -> {group_1_hosts}"
-                f"\nDC1 -> {group_2_hosts}"
-            )
-            log.debug(log_debug)
-
-            log_info_msg = f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            simulate_netsplit_between_hosts(rados_obj, group_1_hosts, group_2_hosts)
-
-            log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            check_individual_netsplit_warning(rados_obj, group_1_hosts, group_2_hosts)
-
-            log_info_msg = f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
-            log.info(log_info_msg)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_1_hosts)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_2_hosts)
-
-            log.info("Step 4: Wait for clean PGs")
-            wait_for_clean_pg_sets(rados_obj=rados_obj)
-
-            log.info("Step 5: Wait for cluster HEALTH_OK")
-            wait_for_cluster_health(client_node, "HEALTH_OK")
+            netsplit_scenarios.scenario1(stretch_site=stretch_site)
 
         if (
             "scenario2" in scenarios_to_run
@@ -214,98 +187,22 @@ def run(ceph_cluster, **kw):
                 f"\n{separator}"
             )
             log.info(info_msg)
-            group_1_hosts = list()
-            group_2_hosts = list()
-
-            # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
-            random_host = random.choice(stretch_site[0])
-            group_1_hosts.append(random_host)
-
-            # selecting hosts which are not in group1
-            # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
-            random_host = random.choice(stretch_site[1])
-            group_2_hosts.append(random_host)
-
-            log_debug = (
-                f"\nSelected mon hosts are"
-                f"\nDC1 -> {group_1_hosts}"
-                f"\nDC2 -> {group_2_hosts}"
-            )
-            log.debug(log_debug)
-
-            log_info_msg = f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            simulate_netsplit_between_hosts(rados_obj, group_1_hosts, group_2_hosts)
-
-            log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            check_individual_netsplit_warning(rados_obj, group_1_hosts, group_2_hosts)
-
-            log_info_msg = f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
-            log.info(log_info_msg)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_1_hosts)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_2_hosts)
-
-            log.info("Step 4: Wait for clean PGs")
-            wait_for_clean_pg_sets(rados_obj=rados_obj)
-
-            log.info("Step 5: Wait for cluster HEALTH_OK")
-            wait_for_cluster_health(client_node, "HEALTH_OK")
+            netsplit_scenarios.scenario2(stretch_site=stretch_site)
 
         if (
             "scenario3" in scenarios_to_run
             or STRETCH_MODE
             or REGULAR_CLUSTER_WITH_MON_LOCATION
             or NAZ_STRETCH_CLUSTER
+            or REGULAR_CLUSTER_WITHOUT_MON_LOCATION
         ):
             info_msg = (
                 f"\n{separator}"
-                f"\nScenario 3 -> [{logging_code}] Netsplit between monA of DC2 and monB of DC1. "
-                "monC of DC2 and monB of DC1"
+                f"\nScenario 3 -> [{logging_code}] Netsplit between 1 Mon of DC1 and more than 1 mon of DC2"
                 f"\n{separator}"
             )
             log.info(info_msg)
-            group_1_hosts = list()
-            group_2_hosts = list()
-
-            # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
-            random_host = random.choice(stretch_site[0])
-            group_1_hosts.append(random_host)
-
-            # selecting 2 host from DC2
-            # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
-            for _ in range(2):
-                # Using set to remove already selected hosts in group_2_hosts
-                random_host = random.choice(
-                    list(set(stretch_site[1]) - set(group_2_hosts))
-                )
-                group_2_hosts.append(random_host)
-
-            log_debug = (
-                f"\nSelected mon hosts are"
-                f"\nDC1 -> {group_1_hosts}"
-                f"\nDC2 -> {group_2_hosts}"
-            )
-            log.debug(log_debug)
-
-            log_info_msg = f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            simulate_netsplit_between_hosts(rados_obj, group_1_hosts, group_2_hosts)
-
-            log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            check_individual_netsplit_warning(rados_obj, group_1_hosts, group_2_hosts)
-
-            log_info_msg = f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
-            log.info(log_info_msg)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_1_hosts)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_2_hosts)
-
-            log.info("Step 4: Wait for clean PGs")
-            wait_for_clean_pg_sets(rados_obj=rados_obj)
-
-            log.info("Step 5: Wait for cluster HEALTH_OK")
-            wait_for_cluster_health(client_node, "HEALTH_OK")
+            netsplit_scenarios.scenario3(stretch_site=stretch_site)
 
         if "scenario4" in scenarios_to_run or STRETCH_MODE:
             info_msg = (
@@ -314,86 +211,20 @@ def run(ceph_cluster, **kw):
                 f"\n{separator}"
             )
             log.info(info_msg)
-
-            group_1_hosts = list()
-            group_2_hosts = list()
-
-            # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
-            random_host = random.choice(stretch_site[0])
-            group_1_hosts.append(random_host)
-
-            random_host = random.choice(tiebreaker_hosts)
-            group_2_hosts.append(random_host)
-
-            log_debug = (
-                f"\nSelected mon hosts are"
-                f"\nDC1 -> {group_1_hosts}"
-                f"\nDC2 -> {group_2_hosts}"
-            )
-            log.debug(log_debug)
-
-            log_info_msg = f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            simulate_netsplit_between_hosts(rados_obj, group_1_hosts, group_2_hosts)
-
-            log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            check_individual_netsplit_warning(rados_obj, group_1_hosts, group_2_hosts)
-
-            log_info_msg = f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
-            log.info(log_info_msg)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_1_hosts)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_2_hosts)
-
-            log.info("Step 4: Wait for clean PGs")
-            wait_for_clean_pg_sets(rados_obj=rados_obj)
-
-            log.info("Step 5: Wait for cluster HEALTH_OK")
-            wait_for_cluster_health(client_node, "HEALTH_OK")
+            netsplit_scenarios.scenario4(stretch_site=stretch_site)
 
         if (
             "scenario5" in scenarios_to_run
             or REGULAR_CLUSTER_WITH_MON_LOCATION
             or NAZ_STRETCH_CLUSTER
+            or REGULAR_CLUSTER_WITHOUT_MON_LOCATION
         ):
             info_msg = (
                 f"\n{separator}"
                 f"\nScenario 5 -> [{logging_code}] Netsplit between all mons of DC1 and all mons of DC2"
                 f"\n{separator}"
             )
-            log.info(info_msg)
-
-            group_1_hosts = stretch_site[0]
-            group_2_hosts = stretch_site[1]
-
-            log_debug = (
-                f"\nSelected mon hosts are"
-                f"\nDC1 -> {group_1_hosts}"
-                f"\nDC2 -> {group_2_hosts}"
-            )
-            log.debug(log_debug)
-
-            log_info_msg = f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            simulate_netsplit_between_hosts(rados_obj, group_1_hosts, group_2_hosts)
-            simulate_netsplit_between_hosts(rados_obj, group_2_hosts, group_1_hosts)
-
-            log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
-            log.info(log_info_msg)
-            check_location_netsplit_warning(
-                rados_obj, stretch_mode.site_1_name, stretch_mode.site_2_name
-            )
-
-            log_info_msg = f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
-            log.info(log_info_msg)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_1_hosts)
-            flush_ip_table_rules_on_all_hosts(rados_obj, group_2_hosts)
-
-            log.info("Step 4: Wait for clean PGs")
-            wait_for_clean_pg_sets(rados_obj=rados_obj)
-
-            log.info("Step 5: Wait for cluster HEALTH_OK")
-            wait_for_cluster_health(client_node, "HEALTH_OK")
+            netsplit_scenarios.scenario5(stretch_site=stretch_site)
 
         if "scenario6" in scenarios_to_run or NAZ_STRETCH_CLUSTER:
             info_msg = (
@@ -404,46 +235,20 @@ def run(ceph_cluster, **kw):
                 f"\n{separator}"
             )
             log.info(info_msg)
+            netsplit_scenarios.scenario6(stretch_site=stretch_site, dc_names=dc_names)
 
-            selected_hosts = [None] * len(dc_names)
-
-            for i, site_hosts in enumerate(stretch_site):
-                random_host = random.choice(site_hosts)
-                selected_hosts[i] = random_host
-                log_debug = (
-                    f"\nSelected mon hosts for Site {i} are" f"\n{selected_hosts[i]}"
-                )
-                log.debug(log_debug)
-
-            for i in range(0, len(selected_hosts) - 1):
-                log_info_msg = f"Step 1: Simulating netsplit between {selected_hosts[i]} <-> {selected_hosts[i + 1]}"
-                log.info(log_info_msg)
-                simulate_netsplit_between_hosts(
-                    rados_obj, [selected_hosts[i]], [selected_hosts[i + 1]]
-                )
-
-            for i in range(0, len(selected_hosts) - 1):
-                log_info_msg = (
-                    f"Step 2: Validating netsplit warning between {selected_hosts[i]} "
-                    f"<-> {selected_hosts[i + 1]}"
-                )
-                log.info(log_info_msg)
-                check_individual_netsplit_warning(
-                    rados_obj,
-                    [selected_hosts[i]],
-                    [selected_hosts[i + 1]],
-                    expected_warning_count=2,
-                )
-
-            for i in range(0, len(selected_hosts) - 1):
-                log_info_msg = f"Step 3: Flushing IP tables rules of {selected_hosts[i]} ,{selected_hosts[i + 1]}"
-                log.info(log_info_msg)
-                flush_ip_table_rules_on_all_hosts(
-                    rados_obj, [selected_hosts[i], selected_hosts[i + 1]]
-                )
-
-            log.info("Step 4: Wait for clean PGs")
-            wait_for_clean_pg_sets(rados_obj=rados_obj)
+        if "scenario7" in scenarios_to_run or REGULAR_CLUSTER_WITH_MON_LOCATION:
+            info_msg = (
+                f"\n{separator}"
+                f"\nScenario 7 -> [{logging_code}] Netsplit between "
+                f"mons with rack crush location "
+                f"\n{separator}"
+            )
+            log.info(info_msg)
+            netsplit_scenarios.scenario7(
+                stretch_site=stretch_site,
+                crush_location_type="rack",
+            )
 
     except Exception as e:
         log.error(f"Failed with exception: {e.__doc__}")
@@ -478,6 +283,286 @@ def run(ceph_cluster, **kw):
 
     log.info("All the tests completed on the cluster, Pass!!!")
     return 0
+
+
+class NetsplitScenarios(StretchMode):
+    def scenario1(self, stretch_site: List[List]):
+        group_1_hosts = list()
+        group_2_hosts = list()
+
+        # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
+        random_host = random.choice(stretch_site[0])
+        group_1_hosts.append(random_host)
+
+        # selecting hosts which are not in group1
+        random_host = random.choice(list(set(stretch_site[0]) - set(group_1_hosts)))
+        group_2_hosts.append(random_host)
+
+        log_debug = (
+            f"\nSelected mon hosts are"
+            f"\nDC1 -> {group_1_hosts}"
+            f"\nDC1 -> {group_2_hosts}"
+        )
+        log.debug(log_debug)
+
+        log_info_msg = (
+            f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        simulate_netsplit_between_hosts(self.rados_obj, group_1_hosts, group_2_hosts)
+
+        log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
+        log.info(log_info_msg)
+        check_individual_netsplit_warning(self.rados_obj, group_1_hosts, group_2_hosts)
+
+        log_info_msg = (
+            f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_1_hosts)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_2_hosts)
+
+        log.info("Step 4: Wait for clean PGs")
+        if wait_for_clean_pg_sets(rados_obj=self.rados_obj) is False:
+            raise Exception("PGs did not reach active + clean within timeout")
+
+        log.info("Step 5: Wait for cluster HEALTH_OK")
+        if wait_for_cluster_health(self.client_node, "HEALTH_OK") is False:
+            raise Exception("Cluster did not reach HEALTH_OK within timeout")
+
+    def scenario2(self, stretch_site: List[list]) -> None:
+        group_1_hosts = list()
+        group_2_hosts = list()
+
+        # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
+        random_host = random.choice(stretch_site[0])
+        group_1_hosts.append(random_host)
+
+        # selecting hosts which are not in group1
+        # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
+        random_host = random.choice(stretch_site[1])
+        group_2_hosts.append(random_host)
+
+        log_debug = (
+            f"\nSelected mon hosts are"
+            f"\nDC1 -> {group_1_hosts}"
+            f"\nDC2 -> {group_2_hosts}"
+        )
+        log.debug(log_debug)
+
+        log_info_msg = (
+            f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        simulate_netsplit_between_hosts(self.rados_obj, group_1_hosts, group_2_hosts)
+
+        log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
+        log.info(log_info_msg)
+        check_individual_netsplit_warning(self.rados_obj, group_1_hosts, group_2_hosts)
+
+        log_info_msg = (
+            f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_1_hosts)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_2_hosts)
+
+        log.info("Step 4: Wait for clean PGs")
+        if wait_for_clean_pg_sets(rados_obj=self.rados_obj) is False:
+            raise Exception("PGs did not reach active + clean within timeout")
+
+        log.info("Step 5: Wait for cluster HEALTH_OK")
+        if wait_for_cluster_health(self.client_node, "HEALTH_OK") is False:
+            raise Exception("Cluster did not reach HEALTH_OK within timeout")
+
+    def scenario3(self, stretch_site: List[List]):
+        group_1_hosts = list()
+        group_2_hosts = list()
+
+        # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
+        random_host = random.choice(stretch_site[0])
+        group_1_hosts.append(random_host)
+
+        # selecting 2 host from DC2
+        # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
+        for _ in range(len(stretch_site[1]) - 1):
+            # Using set to remove already selected hosts in group_2_hosts
+            random_host = random.choice(list(set(stretch_site[1]) - set(group_2_hosts)))
+            group_2_hosts.append(random_host)
+
+        log_debug = (
+            f"\nSelected mon hosts are"
+            f"\nDC1 -> {group_1_hosts}"
+            f"\nDC2 -> {group_2_hosts}"
+        )
+        log.debug(log_debug)
+
+        log_info_msg = (
+            f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        simulate_netsplit_between_hosts(self.rados_obj, group_1_hosts, group_2_hosts)
+
+        log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
+        log.info(log_info_msg)
+        check_individual_netsplit_warning(self.rados_obj, group_1_hosts, group_2_hosts)
+
+        log_info_msg = (
+            f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_1_hosts)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_2_hosts)
+
+        log.info("Step 4: Wait for clean PGs")
+        if wait_for_clean_pg_sets(rados_obj=self.rados_obj) is False:
+            raise Exception("PGs did not reach active + clean within timeout")
+
+        log.info("Step 5: Wait for cluster HEALTH_OK")
+        if wait_for_cluster_health(self.client_node, "HEALTH_OK") is False:
+            raise Exception("Cluster did not reach HEALTH_OK within timeout")
+
+    def scenario4(self, stretch_site):
+        group_1_hosts = list()
+        group_2_hosts = list()
+
+        # stretch_site = [['depressa003', 'depressa004'], ['depressa005', 'depressa006']]
+        random_host = random.choice(stretch_site[0])
+        group_1_hosts.append(random_host)
+
+        random_host = random.choice(self.tiebreaker_hosts)
+        group_2_hosts.append(random_host)
+
+        log_debug = (
+            f"\nSelected mon hosts are"
+            f"\nDC1 -> {group_1_hosts}"
+            f"\nDC2 -> {group_2_hosts}"
+        )
+        log.debug(log_debug)
+
+        log_info_msg = (
+            f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        simulate_netsplit_between_hosts(self.rados_obj, group_1_hosts, group_2_hosts)
+
+        log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
+        log.info(log_info_msg)
+        check_individual_netsplit_warning(self.rados_obj, group_1_hosts, group_2_hosts)
+
+        log_info_msg = (
+            f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_1_hosts)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_2_hosts)
+
+        log.info("Step 4: Wait for clean PGs")
+        if wait_for_clean_pg_sets(rados_obj=self.rados_obj) is False:
+            raise Exception("PGs did not reach active + clean within timeout")
+
+        log.info("Step 5: Wait for cluster HEALTH_OK")
+        if wait_for_cluster_health(self.client_node, "HEALTH_OK") is False:
+            raise Exception("Cluster did not reach HEALTH_OK within timeout")
+
+    def scenario5(self, stretch_site: List[List]):
+        group_1_hosts = stretch_site[0]
+        group_2_hosts = stretch_site[1]
+
+        log_debug = (
+            f"\nSelected mon hosts are"
+            f"\nDC1 -> {group_1_hosts}"
+            f"\nDC2 -> {group_2_hosts}"
+        )
+        log.debug(log_debug)
+
+        log_info_msg = (
+            f"Step 1: Simulating netsplit between {group_1_hosts} <-> {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        simulate_netsplit_between_hosts(self.rados_obj, group_1_hosts, group_2_hosts)
+        simulate_netsplit_between_hosts(self.rados_obj, group_2_hosts, group_1_hosts)
+
+        log_info_msg = f"Step 2: Validating netsplit warning between {group_1_hosts} <-> {group_2_hosts}"
+        log.info(log_info_msg)
+        check_location_netsplit_warning(
+            self.rados_obj, self.site_1_name, self.site_2_name
+        )
+
+        log_info_msg = (
+            f"Step 3: Flushing IP tables rules of {group_1_hosts} and {group_2_hosts}"
+        )
+        log.info(log_info_msg)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_1_hosts)
+        flush_ip_table_rules_on_all_hosts(self.rados_obj, group_2_hosts)
+
+        log.info("Step 4: Wait for clean PGs")
+        if wait_for_clean_pg_sets(rados_obj=self.rados_obj) is False:
+            raise Exception("PGs did not reach active + clean within timeout")
+
+        log.info("Step 5: Wait for cluster HEALTH_OK")
+        if wait_for_cluster_health(self.client_node, "HEALTH_OK") is False:
+            raise Exception("Cluster did not reach HEALTH_OK within timeout")
+
+    def scenario6(self, stretch_site: List[List], dc_names: List):
+        selected_hosts = [None] * len(dc_names)
+
+        for i, site_hosts in enumerate(stretch_site):
+            random_host = random.choice(site_hosts)
+            selected_hosts[i] = random_host
+            log_debug = (
+                f"\nSelected mon hosts for Site {i} are" f"\n{selected_hosts[i]}"
+            )
+            log.debug(log_debug)
+
+        for i in range(0, len(selected_hosts) - 1):
+            log_info_msg = f"Step 1: Simulating netsplit between {selected_hosts[i]} <-> {selected_hosts[i + 1]}"
+            log.info(log_info_msg)
+            simulate_netsplit_between_hosts(
+                self.rados_obj, [selected_hosts[i]], [selected_hosts[i + 1]]
+            )
+
+        for i in range(0, len(selected_hosts) - 1):
+            log_info_msg = (
+                f"Step 2: Validating netsplit warning between {selected_hosts[i]} "
+                f"<-> {selected_hosts[i + 1]}"
+            )
+            log.info(log_info_msg)
+            check_individual_netsplit_warning(
+                self.rados_obj,
+                [selected_hosts[i]],
+                [selected_hosts[i + 1]],
+                expected_warning_count=2,
+            )
+
+        for i in range(0, len(selected_hosts) - 1):
+            log_info_msg = f"Step 3: Flushing IP tables rules of {selected_hosts[i]} ,{selected_hosts[i + 1]}"
+            log.info(log_info_msg)
+            flush_ip_table_rules_on_all_hosts(
+                self.rados_obj, [selected_hosts[i], selected_hosts[i + 1]]
+            )
+
+        log.info("Step 4: Wait for clean PGs")
+        if wait_for_clean_pg_sets(rados_obj=self.rados_obj) is False:
+            raise Exception("PGs did not reach active + clean within timeout")
+
+    def scenario7(self, stretch_site: List, crush_location_type: str) -> None:
+
+        for mon in self.site_1_mon_hosts:
+            self.mon_set_location(
+                daemon=mon,
+                crush_location_type=crush_location_type,
+                crush_name=f"{crush_location_type}1",
+            )
+
+        for mon in self.site_2_mon_hosts:
+            self.mon_set_location(
+                daemon=mon,
+                crush_location_type=crush_location_type,
+                crush_name=f"{crush_location_type}2",
+            )
+
+        self.scenario2(stretch_site=stretch_site)
 
 
 @retry((Exception), backoff=1, tries=3, delay=20)
