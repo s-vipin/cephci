@@ -49,7 +49,6 @@ class PerfWorkflows:
         if pool_config.get("pool_type", "replicated") == "erasure":
             method_should_succeed(
                 self.rados_obj.create_erasure_pool,
-                pool_config["pool_name"],
                 **pool_config,
             )
         else:
@@ -71,8 +70,8 @@ class PerfWorkflows:
         """
         # total available space for the pool
         pool_stat = self.rados_obj.get_cephdf_stats(pool_name=pool_name)
-        max_avail_kb = pool_stat["stats"]["max_avail"]
-        # max_avail_mb = floor(max_avail_kb / 1 << 10)
+        max_avail_bytes = pool_stat["stats"]["max_avail"]
+        max_avail_kb = floor(max_avail_bytes / 1024)
 
         # amount of data to be written to the pool
         total_write_data = floor(max_avail_kb * fill_percent / 100)
@@ -81,7 +80,7 @@ class PerfWorkflows:
         total_write_client = floor(total_write_data / num_client)
 
         # determine number of objects to be written
-        obj_size_kb_int = int(obj_size[:-1])
+        obj_size_kb_int = int("".join(filter(str.isdigit, obj_size)))
         if "M" in obj_size:
             obj_size_kb_int *= 1 << 10
         obj_count = floor(total_write_client / obj_size_kb_int)
