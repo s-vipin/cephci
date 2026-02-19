@@ -11,6 +11,7 @@ Parameters:
 """
 
 from dataclasses import dataclass
+from typing import List
 
 from ceph.ceph import CommandFailed
 from ceph.rados.core_workflows import RadosOrchestrator
@@ -50,6 +51,50 @@ class OsdOkToUpgradeCommandOutput:
             f"osds_upgraded: {self.osds_upgraded}\n"
             f"bad_no_version: {self.bad_no_version}\n"
         )
+
+    def __getitem__(self, key):
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key)
+
+    def __eq__(self, other):
+        if not isinstance(other, OsdOkToUpgradeCommandOutput):
+            return NotImplemented
+
+        log.info("\nComparing expected and actual objects...")
+        log.info(f"\nExpected:\n{self}")
+        log.info(f"\nActual:\n{other}")
+
+        # Compare simple fields first
+        if self.ok_to_upgrade != other.ok_to_upgrade:
+            log.warning("Mismatch: ok_to_upgrade")
+            return False
+
+        if self.all_osds_upgraded != other.all_osds_upgraded:
+            log.warning("Mismatch: all_osds_upgraded")
+            return False
+
+        # Compare list fields
+        list_fields = [
+            "osds_in_crush_bucket",
+            "osds_ok_to_upgrade",
+            "osds_upgraded",
+            "bad_no_version",
+        ]
+        for field in list_fields:
+            self_val = getattr(self, field)
+            other_val = getattr(other, field)
+            self_val.sort()
+            other_val.sort()
+            if self_val != other_val:
+                log.warning(
+                    f"Mismatch in {field}: expected={self_val}, actual={other_val}"
+                )
+                return False
+
+        # All fields matched
+        return True
 
 
 class OsdOkToUpgradeCommand:
@@ -166,3 +211,77 @@ def execute_negative_scenario(
     except Exception as e:
         log.error("Unexpected exception in negative scenario: %s", e)
         raise Exception(e) from e
+
+
+class CephOrchUpgradeCommand:
+    """
+    orch upgrade start
+    [<image>]
+    [--daemon_types <value>]
+    [--hosts <value>]
+    [--services <value>]
+    [--limit <int>]
+    [--ceph_version <value>]
+    """
+
+    def __init__(self, rados_obj: RadosOrchestrator):
+        self.cmd = "ceph orch upgrade start"
+        self.__space()
+        self.rados_obj = rados_obj
+
+    def image(self, image):
+        self.cmd += f"--image {image}"
+        self.__space()
+
+    def ceph_version(self, ceph_version):
+        self.cmd += f"--ceph_version {ceph_version}"
+        self.__space()
+
+    def daemon_types(self, daemon_types: List):
+        self.cmd += "--daemon-types"
+        self.__space()
+        for daemon_type in daemon_types:
+            self.cmd += daemon_type + ","
+        self.__space()
+
+    def services(self, services: List):
+        self.cmd += "--services"
+        self.__space()
+        for service in services:
+            self.cmd += service + ","
+        self.__space()
+
+    def limit(self, value):
+        self.cmd += f"--limit {value}"
+        self.__space()
+
+    def hosts(self, hosts):
+        self.cmd += "--hosts"
+        self.__space()
+        for host in hosts:
+            self.cmd += host + ","
+        self.__space()
+
+    def topological_labels(self, topological_labels: List):
+        self.cmd += f"--topological-labels {topological_labels}"
+        self.__space()
+        for topological_label in topological_labels:
+            self.cmd += topological_label + ","
+        self.__space()
+
+    def __space(self):
+        self.cmd += " "
+
+    def execute(self):
+        self.rados_obj.run_ceph_command(
+            cmd="ceph osd set noout", client_exec=True, print_output=True
+        )
+        self.rados_obj.run_ceph_command(
+            cmd="ceph osd set noscrub", client_exec=True, print_output=True
+        )
+        self.rados_obj.run_ceph_command(
+            cmd="ceph osd set nodeep-scrub", client_exec=True, print_output=True
+        )
+        self.rados_obj.run_ceph_command(
+            cmd=self.cmd, client_exec=True, print_output=True
+        )
