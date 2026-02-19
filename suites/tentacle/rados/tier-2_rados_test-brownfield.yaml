@@ -30,6 +30,7 @@ tests:
                 orphan-initial-daemons: true
                 registry-url: registry.redhat.io
                 allow-fqdn-hostname: true
+                skip-monitoring-stack: true
           - config:
               command: add_hosts
               service: host
