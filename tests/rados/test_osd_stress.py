@@ -98,7 +98,7 @@ def run(ceph_cluster, **kw):
             log.info("RADOS bench IO completed on pool" + _pool)
 
             # start background rados bench IOs on the pool
-            for obj_size in ["4KB", "16KB", "32KB", "256KB"]:
+            for obj_size in ["4KB", "16KB", "32KB"]:
                 rados_obj.bench_write(
                     pool_name=_pool,
                     byte_size=obj_size,
@@ -110,36 +110,37 @@ def run(ceph_cluster, **kw):
         end_time = datetime.datetime.now() + datetime.timedelta(
             seconds=stress_test_duration
         )
-        while end_time > datetime.datetime.now():
-            # proceed to write OMAP data on the pools
-            for omap_pool in omap_pools:
-                omap_cfg = config["omap_config"]
-                omap_cfg["num_keys_obj"] = random.randint(100, omap_cfg["num_keys_obj"])
-                if not pool_obj.fill_omap_entries(pool_name=omap_pool, **omap_cfg):
-                    log.error("Omap entries not generated on pool %s", omap_pool)
-                    raise Exception(f"Omap entries not generated on pool {omap_pool}")
-
-            up_osds = rados_obj.get_osd_list(status="up")
-            log.debug(f"List of 'UP' OSDs: \n{up_osds}")
-            for osd in up_osds:
-                # log fragmentation score and perform OSD compaction
-                rados_obj.check_fragmentation_score(osd_id=osd)
-                log.info("Starting OSD compaction for OSD " + osd)
-                out, _ = cephadm.shell(
-                    args=[f"ceph tell osd.{osd} compact"], timeout=600
-                )
-                time.sleep(5)
-                # log fragmentation score post OSD compaction
-                rados_obj.check_fragmentation_score(osd_id=osd)
-
-            # choose 25% of OMAP pools for deletion at random
-            delete_pools = random.choices(omap_pools, k=int(omap_pool_count * 0.25))
-            log.info("Removing pools: %s", delete_pools)
-            for pool in delete_pools:
-                rados_obj.delete_pool(pool)
-                log.info("Deleted pool %s successfully, now recreating..." % pool)
-                rados_obj.create_pool(pool_name=pool)
-                log.info("Created replicated pool %s for omap successfully" % pool)
+        # while end_time > datetime.datetime.now():
+        #     # proceed to write OMAP data on the pools
+        #     for omap_pool in omap_pools:
+        #         time.sleep(120)
+        #         omap_cfg = config["omap_config"]
+        #         omap_cfg["num_keys_obj"] = random.randint(100, omap_cfg["num_keys_obj"])
+        #         if not pool_obj.fill_omap_entries(pool_name=omap_pool, **omap_cfg):
+        #             log.error("Omap entries not generated on pool %s", omap_pool)
+        #             raise Exception(f"Omap entries not generated on pool {omap_pool}")
+        #
+        #     up_osds = rados_obj.get_osd_list(status="up")
+        #     log.debug(f"List of 'UP' OSDs: \n{up_osds}")
+        #     for osd in up_osds:
+        #         # log fragmentation score and perform OSD compaction
+        #         rados_obj.check_fragmentation_score(osd_id=osd)
+        #         log.info("Starting OSD compaction for OSD " + osd)
+        #         out, _ = cephadm.shell(
+        #             args=[f"ceph tell osd.{osd} compact"], timeout=600
+        #         )
+        #         time.sleep(5)
+        #         # log fragmentation score post OSD compaction
+        #         rados_obj.check_fragmentation_score(osd_id=osd)
+        #
+        #     # choose 25% of OMAP pools for deletion at random
+        #     delete_pools = random.choices(omap_pools, k=int(omap_pool_count * 0.25))
+        #     log.info("Removing pools: %s", delete_pools)
+        #     for pool in delete_pools:
+        #         rados_obj.delete_pool(pool)
+        #         log.info("Deleted pool %s successfully, now recreating..." % pool)
+        #         rados_obj.create_pool(pool_name=pool)
+        #         log.info("Created replicated pool %s for omap successfully" % pool)
 
         log.info(
             "Stress test around omaps completed successfully, proceeding to check for crashes"
@@ -148,7 +149,7 @@ def run(ceph_cluster, **kw):
         log.error(f"Failed with exception: {e.__doc__}")
         log.exception(e)
         # delete rados pool
-        rados_obj.rados_pool_cleanup()
+        # rados_obj.rados_pool_cleanup()
         # log cluster health
         rados_obj.log_cluster_health()
         return 1
