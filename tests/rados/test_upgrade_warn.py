@@ -129,7 +129,7 @@ def run(ceph_cluster, **kw):
                 "Upgrading the cluster from ceph version %s to %s-%s "
                 % (curr_ver, _rhcs_version, _rhcs_release)
             )
-            product: str = args.get("--product", "redhat")
+            product: str = config["product"]
             ctm: CephTestManifest = CephTestManifest(
                 product=product,
                 release=_rhcs_version,
@@ -335,7 +335,8 @@ def run(ceph_cluster, **kw):
                 log.info(
                     "UPGRADE_REDEPLOY_DAEMON warning generated on the cluster. Running upgrade resume as a workaround."
                 )
-                out = rados_obj.run_ceph_command(cmd="ceph orch upgrade resume")
+                cmd="ceph orch upgrade resume"
+                rados_obj.client.exec_command(cmd=cmd, sudo=True)
 
             log.info(
                 "Upgrade in progress, sleeping for 5 seconds and checking cluster state again"
