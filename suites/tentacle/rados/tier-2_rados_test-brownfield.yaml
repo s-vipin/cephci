@@ -159,8 +159,8 @@ tests:
            pool_type: replicated
 
   - test:
-      name: Upgrade cluster to 7.1z2 ceph version
-      desc: Upgrade cluster to 7.1z2 version
+      name: Upgrade cluster to 7.1z8 ceph version
+      desc: Upgrade cluster to 7.1z8 version
       module: test_upgrade_warn.py
       polarion-id: CEPH-83574934
       config:
@@ -170,7 +170,7 @@ tests:
           verbose: true
         args:
           rhcs-version: 7.1
-          release: z2
+          release: z8
           platform: rhel-9
       abort-on-fail: false
 
