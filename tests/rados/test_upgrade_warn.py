@@ -330,6 +330,17 @@ def run(ceph_cluster, **kw):
                         "expected health warning not yet generated on the cluster."
                         f" health_warns on cluster : {ceph_health_status}"
                     )
+            
+            # workaround for upgrade bug :- https://ibm-ceph.atlassian.net/browse/IBMCEPH-12703
+            if "UPGRADE_REDEPLOY_DAEMON" in ceph_health_status:
+                log.info(
+                    """
+                    UPGRADE_REDEPLOY_DAEMON warning generated on the cluster.
+                    Running upgrade resume as a workaround.
+                    Bug :- https://ibm-ceph.atlassian.net/browse/IBMCEPH-12703
+                    """
+                )
+                rados_obj.run_ceph_command(cmd="ceph orch upgrade resume")
 
             log.info(
                 "Upgrade in progress, sleeping for 5 seconds and checking cluster state again"
