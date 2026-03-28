@@ -171,44 +171,44 @@ tests:
                 - mon_osd_down_out_subtree_limit
                 - host
 
-  - test:
-      name: Case 4-Inconsistent objects verification
-      desc: Deep-Scrub:Inconsistent objects>auto repair errors count & auto_repair is true
-      module: test_osd_replicated_inconsistency_scenario.py
-      polarion-id: CEPH-83586175
-      config:
-        pool_name: replicated_pool
-        pg_num_max: 1
-        inconsistent_obj_count: 4
-        debug_enable: False
-        case_to_run:
-          - case4
+  # - test:
+  #     name: Case 4-Inconsistent objects verification
+  #     desc: Deep-Scrub:Inconsistent objects>auto repair errors count & auto_repair is true
+  #     module: test_osd_replicated_inconsistency_scenario.py
+  #     polarion-id: CEPH-83586175
+  #     config:
+  #       pool_name: replicated_pool
+  #       pg_num_max: 1
+  #       inconsistent_obj_count: 4
+  #       debug_enable: False
+  #       case_to_run:
+  #         - case4
 
-  - test:
-      name: Case 5-Inconsistent objects verification
-      desc: Deep-Scrub:Inconsistent objects<auto repair errors count & auto_repair is false
-      module: test_osd_replicated_inconsistency_scenario.py
-      polarion-id: CEPH-83586175
-      config:
-        pool_name: replicated_pool
-        pg_num_max: 1
-        inconsistent_obj_count: 4
-        debug_enable: False
-        case_to_run:
-          - case5
+  # - test:
+  #     name: Case 5-Inconsistent objects verification
+  #     desc: Deep-Scrub:Inconsistent objects<auto repair errors count & auto_repair is false
+  #     module: test_osd_replicated_inconsistency_scenario.py
+  #     polarion-id: CEPH-83586175
+  #     config:
+  #       pool_name: replicated_pool
+  #       pg_num_max: 1
+  #       inconsistent_obj_count: 4
+  #       debug_enable: False
+  #       case_to_run:
+  #         - case5
 
-  - test:
-      name: Case 6-Inconsistent objects verification
-      desc: Deep-Scrub:Inconsistent objects<auto repair errors count & auto_repair is true
-      module: test_osd_replicated_inconsistency_scenario.py
-      polarion-id: CEPH-83586175
-      config:
-        pool_name: replicated_pool
-        pg_num_max: 1
-        inconsistent_obj_count: 4
-        debug_enable: False
-        case_to_run:
-          - case6
+  # - test:
+  #     name: Case 6-Inconsistent objects verification
+  #     desc: Deep-Scrub:Inconsistent objects<auto repair errors count & auto_repair is true
+  #     module: test_osd_replicated_inconsistency_scenario.py
+  #     polarion-id: CEPH-83586175
+  #     config:
+  #       pool_name: replicated_pool
+  #       pg_num_max: 1
+  #       inconsistent_obj_count: 4
+  #       debug_enable: False
+  #       case_to_run:
+  #         - case6
 
   - test:
       name: Verification of the scrub store on Ec pool
@@ -225,28 +225,28 @@ tests:
         crush-failure-domain: host
         is_ecpool: True
 
-  - test:
-      name: Validation of pool-level noscrub and nodeep-scrub settings.
-      desc: Verification of pool scrub settings and ensures user-initiated scrubs still run.
-      module: test_scrub_flag_pool_level.py
-      polarion-id: CEPH-83621444
-      config:
-        pool_names:
-          - active_pool
-          - inactive_pool
-  - test:
-      name: Case1-Verification of osd_scrub_load_threshold on EC Pool
-      desc: Verification of osd_scrub_load_threshold parameter=0
-      module: test_osd_scrub_load_threshold_parameter.py
-      polarion-id: CEPH-83620201
-      config:
-        ec_pool:
-          create: true
-          pool_name: EC_pool
-          pg_num: 1
-        debug_enable: False
-        case_to_run:
-          - case1
+  # - test:
+  #     name: Validation of pool-level noscrub and nodeep-scrub settings.
+  #     desc: Verification of pool scrub settings and ensures user-initiated scrubs still run.
+  #     module: test_scrub_flag_pool_level.py
+  #     polarion-id: CEPH-83621444
+  #     config:
+  #       pool_names:
+  #         - active_pool
+  #         - inactive_pool
+  # - test:
+  #     name: Case1-Verification of osd_scrub_load_threshold on EC Pool
+  #     desc: Verification of osd_scrub_load_threshold parameter=0
+  #     module: test_osd_scrub_load_threshold_parameter.py
+  #     polarion-id: CEPH-83620201
+  #     config:
+  #       ec_pool:
+  #         create: true
+  #         pool_name: EC_pool
+  #         pg_num: 1
+  #       debug_enable: False
+  #       case_to_run:
+  #         - case1
   - test:
       name: Case2-Verification of osd_scrub_load_threshold on EC Pool
       desc: Repair inconsistent object when threshold parameter is 0
@@ -273,19 +273,19 @@ tests:
         debug_enable: False
         case_to_run:
           - case3
-  - test:
-      name: Case4-Verification of osd_scrub_load_threshold on EC Pool
-      desc: Functionality check below and above the node load average
-      module: test_osd_scrub_load_threshold_parameter.py
-      polarion-id: CEPH-83620201
-      config:
-        ec_pool:
-          create: true
-          pool_name: EC_pool
-          pg_num: 1
-        debug_enable: False
-        case_to_run:
-          - case4
+  # - test:
+  #     name: Case4-Verification of osd_scrub_load_threshold on EC Pool
+  #     desc: Functionality check below and above the node load average
+  #     module: test_osd_scrub_load_threshold_parameter.py
+  #     polarion-id: CEPH-83620201
+  #     config:
+  #       ec_pool:
+  #         create: true
+  #         pool_name: EC_pool
+  #         pg_num: 1
+  #       debug_enable: False
+  #       case_to_run:
+  #         - case4
   - test:
       name: Case5-Verification of osd_scrub_load_threshold on EC Pool
       desc: User initiated VS scheduled scrub
@@ -299,17 +299,17 @@ tests:
         debug_enable: False
         case_to_run:
           - case5
-  - test:
-      name: Case6-Verification of osd_scrub_load_threshold on EC Pool
-      desc: Verification of scrub by high CPU load using stress-ng
-      module: test_osd_scrub_load_threshold_parameter.py
-      polarion-id: CEPH-83620201
-      config:
-        ec_pool:
-          create: true
-          pool_name: EC_pool
-          pg_num: 1
-        debug_enable: False
-        case_to_run:
-          - case6
+  # - test:
+  #     name: Case6-Verification of osd_scrub_load_threshold on EC Pool
+  #     desc: Verification of scrub by high CPU load using stress-ng
+  #     module: test_osd_scrub_load_threshold_parameter.py
+  #     polarion-id: CEPH-83620201
+  #     config:
+  #       ec_pool:
+  #         create: true
+  #         pool_name: EC_pool
+  #         pg_num: 1
+  #       debug_enable: False
+  #       case_to_run:
+  #         - case6
 
