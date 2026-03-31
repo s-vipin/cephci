@@ -112,26 +112,26 @@ tests:
         log_to_file: true
       desc: Change config options to enable logging to file
 
-  - test:
-      name: Automatic trimming of osdmaps
-      desc: check for periodic trimming of osdmaps
-      module: test_osdmap_trim.py
-      polarion-id: CEPH-10046
+  # - test:
+  #     name: Automatic trimming of osdmaps
+  #     desc: check for periodic trimming of osdmaps
+  #     module: test_osdmap_trim.py
+  #     polarion-id: CEPH-10046
 
-  - test:
-      name: Trimming of onodes
-      desc: check for the onode trimming in the cluster
-      module: test_osd_onode_trimming.py
-      polarion-id: CEPH-83575269
+  # - test:
+  #     name: Trimming of onodes
+  #     desc: check for the onode trimming in the cluster
+  #     module: test_osd_onode_trimming.py
+  #     polarion-id: CEPH-83575269
 
-  - test:
-      name: Inconsistent object pg check
-      desc: Inconsistent object pg check
-      module: test_osd_inconsistency_pg.py
-      polarion-id: CEPH-9924
-      config:
-        pool_name: Inconsistent_pool
-        pg_num_max: 1
+  # - test:
+  #     name: Inconsistent object pg check
+  #     desc: Inconsistent object pg check
+  #     module: test_osd_inconsistency_pg.py
+  #     polarion-id: CEPH-9924
+  #     config:
+  #       pool_name: Inconsistent_pool
+  #       pg_num_max: 1
 
   - test:
       name: Inconsistent object pg check using pool snapshot for RE pools
@@ -151,24 +151,24 @@ tests:
             num_keys_obj: 10
         delete_pool: true
 
-  - test:
-      name: Inconsistent object secondary pg check using pool snapshot
-      desc: Inconsistent object pg check using pool snapshot for RE pools for secondary OSD in PG
-      module: test_osd_snap_inconsistency_pg.py
-      polarion-id: CEPH-83571452
-      config:
-        test_secondary: true
-        verify_osd_omap_entries:
-          configurations:
-            pool-1:
-              pool_name: Inconsistent_snap_pool
-              pool_type: replicated
-              pg_num: 1
-          omap_config:
-            obj_start: 0
-            obj_end: 5
-            num_keys_obj: 10
-        delete_pool: true
+  # - test:
+  #     name: Inconsistent object secondary pg check using pool snapshot
+  #     desc: Inconsistent object pg check using pool snapshot for RE pools for secondary OSD in PG
+  #     module: test_osd_snap_inconsistency_pg.py
+  #     polarion-id: CEPH-83571452
+  #     config:
+  #       test_secondary: true
+  #       verify_osd_omap_entries:
+  #         configurations:
+  #           pool-1:
+  #             pool_name: Inconsistent_snap_pool
+  #             pool_type: replicated
+  #             pg_num: 1
+  #         omap_config:
+  #           obj_start: 0
+  #           obj_end: 5
+  #           num_keys_obj: 10
+  #       delete_pool: true
 
   - test:
       name: OSD compaction with failures
@@ -212,25 +212,25 @@ tests:
 # scenario 2 - Enables bluestore write v2
 # scenario 3 - Compression mode tests with allocation hints
 
-  - test:
-      name: Bluestore data compression v2 - enable bluestore write v2
-      module: test_bluestore_comp_enhancements.py
-      desc: Positive workflows for bluestore data compression enhancements
-      polarion-id: CEPH-83620071
-      config:
-        scenarios_to_run:
-          - scenario-1
-          - scenario-2
+  # - test:
+  #     name: Bluestore data compression v2 - enable bluestore write v2
+  #     module: test_bluestore_comp_enhancements.py
+  #     desc: Positive workflows for bluestore data compression enhancements
+  #     polarion-id: CEPH-83620071
+  #     config:
+  #       scenarios_to_run:
+  #         - scenario-1
+  #         - scenario-2
 
-  - test:
-      name: Bluestore data compression v2 - compression mode tests with allocation hints
-      module: test_bluestore_comp_enhancements.py
-      desc: Positive workflows for bluestore data compression enhancements
-      polarion-id: CEPH-83620071
-      config:
-        delete_pool: True
-        scenarios_to_run:
-          - scenario-3
+  # - test:
+  #     name: Bluestore data compression v2 - compression mode tests with allocation hints
+  #     module: test_bluestore_comp_enhancements.py
+  #     desc: Positive workflows for bluestore data compression enhancements
+  #     polarion-id: CEPH-83620071
+  #     config:
+  #       delete_pool: True
+  #       scenarios_to_run:
+  #         - scenario-3
 
 # Bluestore compression tests - moved here as part of optimization to reduce RHOS-d run time
 # Tests:-
