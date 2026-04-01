@@ -52,7 +52,11 @@ def run(ceph_cluster, **kw):
 
         log.info(f"Installing {ansible_package_name} package for test")
 
-        Package(installer_node).install(ansible_package_name, nogpgcheck=False)
+        # Package(installer_node).install(ansible_package_name, nogpgcheck=False)
+        cmd = "dnf install https://download-01.beak-001.prod.iad2.dc.redhat.com/brewroot/vol/rhel-10/packages/cephadm-ansible/5.0.1/3.el10cp/noarch/cephadm-ansible-5.0.1-3.el10cp.noarch.rpm -y"
+        installer_node.exec_command(
+            sudo=True, cmd=cmd, verbose=True
+        )
 
         log.info(
             f"Successfully installed {ansible_package_name} package\n"
