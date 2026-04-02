@@ -331,6 +331,12 @@ def run(ceph_cluster, **kw):
                         f" health_warns on cluster : {ceph_health_status}"
                     )
 
+            if "UPGRADE_REDEPLOY_DAEMON" in ceph_health_status:
+                log.info(
+                    "UPGRADE_REDEPLOY_DAEMON warning generated on the cluster. Running upgrade resume as a workaround."
+                )
+                out = rados_obj.run_ceph_command(cmd="ceph orch upgrade resume")
+
             log.info(
                 "Upgrade in progress, sleeping for 5 seconds and checking cluster state again"
             )
