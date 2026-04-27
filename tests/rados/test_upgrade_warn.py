@@ -78,7 +78,7 @@ def run(ceph_cluster, **kw):
     verify_max_avail = config.get("verify_max_avail", False)
     check_for_inactive_pgs = config.get("check_for_inactive_pgs", False)
     verify_cluster_health = config.get("verify_cluster_health", False)
-    enable_debug_level = config.get("enable_debug_level", False)
+    enable_debug_level = config.get("enable_debug_level", True)
     installer = ceph_cluster.get_nodes(role="installer")[0]
 
     init_time, _ = installer.exec_command(cmd="sudo date '+%Y-%m-%d %H:%M:%S'")
@@ -96,10 +96,13 @@ def run(ceph_cluster, **kw):
         f"ceph versions: {rados_obj.run_ceph_command(cmd='ceph versions')} \n"
     )
     log.info(log_dump)
+            
     if enable_debug_level:
         log.debug("Setting up debug configs on the cluster for mon & Mgr daemons")
+        mon_obj.set_config(section="osd", name="debug_osd", value="30/30")
         mon_obj.set_config(section="mon", name="debug_mon", value="30/30")
-        mon_obj.set_config(section="mgr", name="debug_mgr", value="20/20")
+        mon_obj.set_config(section="mgr", name="debug_mgr", value="30/30")
+        log.info("Debug logging enabled for daemons")
 
     if verify_max_avail and not rados_obj.verify_max_avail():
         log.error("MAX_AVAIL deviates on the cluster more than expected")
@@ -439,6 +442,7 @@ def run(ceph_cluster, **kw):
             log.debug("Removing debug configs on the cluster for mon & Mgr")
             mon_obj.remove_config(section="mon", name="debug_mon")
             mon_obj.remove_config(section="mgr", name="debug_mgr")
+            mon_obj.remove_config(section="osd", name="debug_osd")
 
         end_time, _ = installer.exec_command(cmd="sudo date '+%Y-%m-%d %H:%M:%S'")
         msg = f"time when upgrade test was ended : {end_time}"
