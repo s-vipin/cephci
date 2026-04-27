@@ -1191,6 +1191,15 @@ def run(args):
 
         log.info(f"Generated sosreports location : {url_base}/sosreports\n")
 
+    log.info(
+        "\n\nCollecting logs for all the nodes due to failures in testcase"
+    )
+    for cluster in ceph_cluster_dict.keys():
+        # This can be Removed as sos report will have this details as well
+        get_ceph_var_logs(ceph_cluster_dict[cluster], run_dir)
+
+    log.info(f"Generated log location : {url_base}/ceph_logs\n")
+
     return jenkins_rc
 
 
