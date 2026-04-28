@@ -99,7 +99,6 @@ def run(ceph_cluster, **kw):
             
     if enable_debug_level:
         log.debug("Setting up debug configs on the cluster for mon & Mgr daemons")
-        mon_obj.set_config(section="osd", name="debug_osd", value="30/30")
         mon_obj.set_config(section="mon", name="debug_mon", value="30/30")
         mon_obj.set_config(section="mgr", name="debug_mgr", value="30/30")
         log.info("Debug logging enabled for daemons")
@@ -442,7 +441,6 @@ def run(ceph_cluster, **kw):
             log.debug("Removing debug configs on the cluster for mon & Mgr")
             mon_obj.remove_config(section="mon", name="debug_mon")
             mon_obj.remove_config(section="mgr", name="debug_mgr")
-            mon_obj.remove_config(section="osd", name="debug_osd")
 
         end_time, _ = installer.exec_command(cmd="sudo date '+%Y-%m-%d %H:%M:%S'")
         msg = f"time when upgrade test was ended : {end_time}"
