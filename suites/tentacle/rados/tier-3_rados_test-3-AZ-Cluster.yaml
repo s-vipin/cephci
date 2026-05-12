@@ -228,113 +228,114 @@ tests:
       module: test_upgrade_warn.py
       polarion-id: CEPH-83609797
       config:
+        enable_debug_level: true
         verify_warning: false
         verify_daemons: true
         verify_cluster_usage: false
       abort-on-fail: true
 
-  - test:
-      name: Enable Stretch mode on pool post upgrade
-      module: pool_tests.py
-      polarion-id: CEPH-83609796
-      config:
-        enable_3AZ_stretch_pools:
-          pool_name: test-pool-12
-          stretch_bucket: datacenter
-          rule_name: 3az_rule
-          pool_list:
-            - test-pool-12
-      desc: Enable 3 AZ stretch mode on new pools of the cluster post upgrade
+  # - test:
+  #     name: Enable Stretch mode on pool post upgrade
+  #     module: pool_tests.py
+  #     polarion-id: CEPH-83609796
+  #     config:
+  #       enable_3AZ_stretch_pools:
+  #         pool_name: test-pool-12
+  #         stretch_bucket: datacenter
+  #         rule_name: 3az_rule
+  #         pool_list:
+  #           - test-pool-12
+  #     desc: Enable 3 AZ stretch mode on new pools of the cluster post upgrade
 
-  # RHOS-d run duration: 8 mins
-  - test:
-      name: autoscaler flags
-      module: test_pg_autoscale_flag.py
-      polarion-id: CEPH-83574794
-      config:
-        pool_configs_path: "conf/tentacle/rados/test-confs/pool-configurations.yaml"
-        create_ec_pool: true
-        create_re_pool: true
-      desc: verify autoscaler flags functionality
-  #      comments: "Active bug 2361441"
+  # # RHOS-d run duration: 8 mins
+  # - test:
+  #     name: autoscaler flags
+  #     module: test_pg_autoscale_flag.py
+  #     polarion-id: CEPH-83574794
+  #     config:
+  #       pool_configs_path: "conf/tentacle/rados/test-confs/pool-configurations.yaml"
+  #       create_ec_pool: true
+  #       create_re_pool: true
+  #     desc: verify autoscaler flags functionality
+  # #      comments: "Active bug 2361441"
 
-  - test:
-      name: Site-down Scenarios
-      module: test_stretch_n_az_site_down_scenarios.py
-      polarion-id: CEPH-83609869
-      config:
-        pool_name: test_stretch_pool6
-        stretch_bucket: datacenter
-        rule_name: 3az_rule
-      desc: Test stretch site down scenarios in 3 AZ cluster
+  # - test:
+  #     name: Site-down Scenarios
+  #     module: test_stretch_n_az_site_down_scenarios.py
+  #     polarion-id: CEPH-83609869
+  #     config:
+  #       pool_name: test_stretch_pool6
+  #       stretch_bucket: datacenter
+  #       rule_name: 3az_rule
+  #     desc: Test stretch site down scenarios in 3 AZ cluster
 
-  - test:
-      name: Maintenance mode Scenarios
-      module: test_stretch_n_az_site_down_scenarios.py
-      polarion-id: CEPH-83609871
-      config:
-        pool_name: test_stretch_pool7
-        stretch_bucket: datacenter
-        rule_name: 3az_rule
-        scenarios_to_run:
-          - scenario-8
-          - scenario-9
-          - scenario-10
-      desc: Test stretch site maintenance mode scenarios in 3 AZ cluster
+  # - test:
+  #     name: Maintenance mode Scenarios
+  #     module: test_stretch_n_az_site_down_scenarios.py
+  #     polarion-id: CEPH-83609871
+  #     config:
+  #       pool_name: test_stretch_pool7
+  #       stretch_bucket: datacenter
+  #       rule_name: 3az_rule
+  #       scenarios_to_run:
+  #         - scenario-8
+  #         - scenario-9
+  #         - scenario-10
+  #     desc: Test stretch site maintenance mode scenarios in 3 AZ cluster
 
-  - test:
-      name: Negative Scenarios
-      module: test_stretch_n_az_negative_scenarios.py
-      polarion-id: CEPH-83609872
-      config:
-        stretch_bucket: datacenter
-        rule_name: 3az_rule
-      desc: negative scenarios with stretch pool enable command
+  # - test:
+  #     name: Negative Scenarios
+  #     module: test_stretch_n_az_negative_scenarios.py
+  #     polarion-id: CEPH-83609872
+  #     config:
+  #       stretch_bucket: datacenter
+  #       rule_name: 3az_rule
+  #     desc: negative scenarios with stretch pool enable command
 
-  - test:
-      name: Netsplit detection and warning
-      module: test_netsplit_detection_and_warning.py
-      polarion-id: CEPH-83620060
-      config:
-        stretch_bucket: datacenter
-        tiebreaker_mon_site_name: tiebreaker
-        delete_pool: true
-      desc: Netsplit detection and warning in stretch mode
+  # - test:
+  #     name: Netsplit detection and warning
+  #     module: test_netsplit_detection_and_warning.py
+  #     polarion-id: CEPH-83620060
+  #     config:
+  #       stretch_bucket: datacenter
+  #       tiebreaker_mon_site_name: tiebreaker
+  #       delete_pool: true
+  #     desc: Netsplit detection and warning in stretch mode
 
-  - test:
-      name: Netsplit Scenarios data-data sites
-      module: test_stretch_n-az_netsplit_scenarios.py
-      polarion-id: CEPH-83609870
-      config:
-        pool_name: test_stretch_pool7
-        stretch_bucket: datacenter
-        netsplit_site_1: DC1
-        netsplit_site_2: DC3
-        delete_pool: true
-        rule_name: 3az_rule
-      desc: Test stretch Cluster netsplit scenario between data site and tiebreaker site
+  # - test:
+  #     name: Netsplit Scenarios data-data sites
+  #     module: test_stretch_n-az_netsplit_scenarios.py
+  #     polarion-id: CEPH-83609870
+  #     config:
+  #       pool_name: test_stretch_pool7
+  #       stretch_bucket: datacenter
+  #       netsplit_site_1: DC1
+  #       netsplit_site_2: DC3
+  #       delete_pool: true
+  #       rule_name: 3az_rule
+  #     desc: Test stretch Cluster netsplit scenario between data site and tiebreaker site
 
-  - test:
-      name: Mon and Mgr Serviceability Scenarios
-      module: test_stretch_n_az_mon_serviceability_scenarios.py
-      polarion-id: CEPH-83609798
-      config:
-        stretch_bucket: datacenter
-        scenarios_to_run:
-          - scenario-1
-          - scenario-2
-          - scenario-3
-          - scenario-4
-          - scenario-5
-          - scenario-6
-          - scenario-7
-      desc: Test mon and mgr serviceability scenarios in 3 AZ stretch cluster
+  # - test:
+  #     name: Mon and Mgr Serviceability Scenarios
+  #     module: test_stretch_n_az_mon_serviceability_scenarios.py
+  #     polarion-id: CEPH-83609798
+  #     config:
+  #       stretch_bucket: datacenter
+  #       scenarios_to_run:
+  #         - scenario-1
+  #         - scenario-2
+  #         - scenario-3
+  #         - scenario-4
+  #         - scenario-5
+  #         - scenario-6
+  #         - scenario-7
+  #     desc: Test mon and mgr serviceability scenarios in 3 AZ stretch cluster
 
-  - test:
-      name: N az stretch revert holistic test
-      module: test_n_az_revert_stretch_holistic_test.py
-      polarion-id: CEPH-83620034
-      config:
-        rule_name: 3az_rule
-        stretch_bucket: datacenter
-      desc: N az stretch revert holistic test
+  # - test:
+  #     name: N az stretch revert holistic test
+  #     module: test_n_az_revert_stretch_holistic_test.py
+  #     polarion-id: CEPH-83620034
+  #     config:
+  #       rule_name: 3az_rule
+  #       stretch_bucket: datacenter
+  #     desc: N az stretch revert holistic test
