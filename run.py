@@ -748,6 +748,8 @@ def run(args):
 
     if "collect-coredump" in custom_config_dict.keys():
         collect_coredump = bool(custom_config_dict["collect-coredump"])
+    if "collect-ceph-logs" in custom_config_dict.keys():
+        collect_ceph_logs = bool(custom_config_dict["collect-ceph-logs"])
 
     if "collect-ceph-logs" in custom_config_dict.keys():
         collect_ceph_logs = bool(custom_config_dict["collect-ceph-logs"])
