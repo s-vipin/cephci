@@ -18,9 +18,9 @@ tests:
         base_cmd_args:
           verbose: true
         args:
-          rhcs-version: 8.1
+          rhcs-version: 9.0
           platform: rhel-9
-          release: rc
+          release: z2
           mon-ip: node1
           orphan-initial-daemons: true
           skip-dashboard: true
@@ -228,8 +228,8 @@ tests:
         id: client.1 # client Id (<type>.<Id>)
         nodes:                            # client node
           - node17:
-              release: 8.1
-              tag: rc
+              release: 9.0
+              tag: z2
         install_packages:
           - ceph-common
           - ceph-base
@@ -285,8 +285,6 @@ tests:
           verbose: true
         args:
           daemon_types: mgr,crash,mon
-          rhcs-version: 9.1
-          release: stable
           platform: rhel-9
       abort-on-fail: true
 

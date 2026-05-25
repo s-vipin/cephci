@@ -23,8 +23,8 @@ tests:
         base_cmd_args:
           verbose: true
         args:
-          rhcs-version: 7.1
-          release: rc
+          rhcs-version: 9.0
+          release: z2
           platform: rhel-9
           mon-ip: node1
           orphan-initial-daemons: true
@@ -155,8 +155,8 @@ tests:
         id: client.1                      # client Id (<type>.<Id>)
         nodes:                            # client node
           - node8:
-              release: 7.1
-              tag: rc
+              release: 9.0
+              tag: z2
         install_packages:
           - ceph-common
           - ceph-base

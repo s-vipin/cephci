@@ -19,8 +19,8 @@ tests:
           verbose: true
         args:
           mon-ip: node1
-          rhcs-version: 8.1
-          release: rc
+          rhcs-version: 9.0
+          release: z2
           platform: rhel-9
           ssh-user: cephuser
           skip-monitoring-stack: true
@@ -159,8 +159,8 @@ tests:
         id: client.1                            # client Id (<type>.<Id>)
         nodes:                                  # client node
           - node10:
-              release: 8.1
-              tag: rc
+              release: 9.0
+              tag: z2
         install_packages:
           - ceph-common
           - ceph-base

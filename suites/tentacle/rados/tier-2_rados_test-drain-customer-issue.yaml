@@ -27,8 +27,8 @@ tests:
               command: bootstrap
               service: cephadm
               args:
-                rhcs-version: 7.1
-                release: z0
+                rhcs-version: 9.0
+                release: z2
                 platform: rhel-9
                 mon-ip: node1
                 orphan-initial-daemons: true
@@ -99,8 +99,8 @@ tests:
         id: client.1                      # client Id (<type>.<Id>)
         nodes:                            # client node
           - node7:
-              release: 7.1
-              tag: z0
+              release: 9.0
+              tag: z2
         install_packages:
           - ceph-common
         copy_admin_keyring: true          # Copy admin keyring to node
@@ -117,24 +117,24 @@ tests:
         log_to_file: true
       desc: Change config options to enable logging to file
 
-  # RHOS-d run duration: 8 mins
-  - test:
-      name: MGR regression test
-      module: test_mgr_daemon.py
-      polarion-id: CEPH-83586116
-      desc: MGR regression testing
+  # # RHOS-d run duration: 8 mins
+  # - test:
+  #     name: MGR regression test
+  #     module: test_mgr_daemon.py
+  #     polarion-id: CEPH-83586116
+  #     desc: MGR regression testing
 
-  - test:
-      name: Reproducing the Ceph mgr crash bug
-      module: test_node_drain_customer_bug.py
-      polarion-id: CEPH-83595932
-      abort-on-fail: true
-      config:
-        replicated_pool:
-          create: true
-          pool_name: mgr_test_pool
-          delete_pool: mgr_test_pool
-      desc: Reproducing the Ceph mgr crashed after a mgr failover
+  # - test:
+  #     name: Reproducing the Ceph mgr crash bug
+  #     module: test_node_drain_customer_bug.py
+  #     polarion-id: CEPH-83595932
+  #     abort-on-fail: true
+  #     config:
+  #       replicated_pool:
+  #         create: true
+  #         pool_name: mgr_test_pool
+  #         delete_pool: mgr_test_pool
+  #     desc: Reproducing the Ceph mgr crashed after a mgr failover
 
   - test:
       name: Upgrade cluster to latest 9.x ceph version

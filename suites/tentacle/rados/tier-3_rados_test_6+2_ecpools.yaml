@@ -22,8 +22,8 @@ tests:
                 verbose: true
               args:
                 mon-ip: node1
-                rhcs-version: 8.1
-                release: rc
+                rhcs-version: 9.0
+                release: z2
                 platform: rhel-9
                 skip-monitoring-stack: true
 
@@ -148,8 +148,8 @@ tests:
         id: client.1                      # client Id (<type>.<Id>)
         nodes:                            # client node
           - node7:
-              release: 8.1
-              tag: rc
+              release: 9.0
+              tag: z2
         install_packages:
           - ceph-common
         copy_admin_keyring: true          # Copy admin keyring to node
