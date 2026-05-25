@@ -20,7 +20,8 @@ tests:
         args:
           mon-ip: node1
           rhcs-version: 8.1
-          release: rc
+          release: z5
+          custom_image: cp.stg.icr.io/cp/ibm-ceph/ceph-8-rhel9:8.1z5-0.hotfix.IBMCloud4
           platform: rhel-9
           ssh-user: cephuser
           skip-monitoring-stack: true
@@ -160,7 +161,7 @@ tests:
         nodes:                                  # client node
           - node10:
               release: 8.1
-              tag: rc
+              tag: z5
         install_packages:
           - ceph-common
           - ceph-base
