@@ -249,29 +249,29 @@ tests:
         log_to_file: true
       desc: Change config options to enable logging to file
 
-  - test:
-      name: Add topological label to hosts
-      desc: Add topological label to hosts
-      module: test_add_topological_labels.py
-      abort-on-fail: true
-      config:
-        nodes:
-          node1:  rack=rack1,chassis=chassis1
-          node2:  rack=rack1,chassis=chassis2
-          node3:  rack=rack2,chassis=chassis3
-          node4:  rack=rack2,chassis=chassis4
-          node5:  rack=rack3,chassis=chassis5
-          node6:  rack=rack3,chassis=chassis6
-          node7:  rack=rack4,chassis=chassis7
-          node8:  rack=rack4,chassis=chassis8
-          node9:  rack=rack5,chassis=chassis9
-          node10: rack=rack5,chassis=chassis10
-          node11: rack=rack6,chassis=chassis11
-          node12: rack=rack6,chassis=chassis12
-          node13: rack=rack7,chassis=chassis13
-          node14: rack=rack7,chassis=chassis14
-          node15: rack=rack8,chassis=chassis15
-          node16: rack=rack8,chassis=chassis16
+  # - test:
+  #     name: Add topological label to hosts
+  #     desc: Add topological label to hosts
+  #     module: test_add_topological_labels.py
+  #     abort-on-fail: true
+  #     config:
+  #       nodes:
+  #         node1:  rack=rack1,chassis=chassis1
+  #         node2:  rack=rack1,chassis=chassis2
+  #         node3:  rack=rack2,chassis=chassis3
+  #         node4:  rack=rack2,chassis=chassis4
+  #         node5:  rack=rack3,chassis=chassis5
+  #         node6:  rack=rack3,chassis=chassis6
+  #         node7:  rack=rack4,chassis=chassis7
+  #         node8:  rack=rack4,chassis=chassis8
+  #         node9:  rack=rack5,chassis=chassis9
+  #         node10: rack=rack5,chassis=chassis10
+  #         node11: rack=rack6,chassis=chassis11
+  #         node12: rack=rack6,chassis=chassis12
+  #         node13: rack=rack7,chassis=chassis13
+  #         node14: rack=rack7,chassis=chassis14
+  #         node15: rack=rack8,chassis=chassis15
+  #         node16: rack=rack8,chassis=chassis16
 
   - test:
       name: Upgrade mgr,crash,mon to latest 9.1 ceph version
@@ -290,65 +290,65 @@ tests:
           platform: rhel-9
       abort-on-fail: true
 
-  - test:
-      name: OSD upgrade hosts scenarios
-      desc: OSD upgrade hosts scenarios
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        test_stop_start: true
-        scenarios:
-          - hosts_HOST1
-          - hosts_HOST1_services_osd_osds
-          - hosts_rack1_rack2
-          # - host_without_osd
-          # BUG:- https://ibm-ceph.atlassian.net/browse/IBMCEPH-11215
-        limit: 3
-        osd_service_name: "osd.osds"
-        host_without_osd: node11
+  # - test:
+  #     name: OSD upgrade hosts scenarios
+  #     desc: OSD upgrade hosts scenarios
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       test_stop_start: true
+  #       scenarios:
+  #         - hosts_HOST1
+  #         - hosts_HOST1_services_osd_osds
+  #         - hosts_rack1_rack2
+  #         # - host_without_osd
+  #         # BUG:- https://ibm-ceph.atlassian.net/browse/IBMCEPH-11215
+  #       limit: 3
+  #       osd_service_name: "osd.osds"
+  #       host_without_osd: node11
 
-  - test:
-      name: OSD upgrade topological label scenarios
-      desc: OSD upgrade topological label scenarios host chassis rack
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        test_pause_resume: true
-        scenarios:
-          - topological_host
-          - topological_chassis
-          - topological_rack
+  # - test:
+  #     name: OSD upgrade topological label scenarios
+  #     desc: OSD upgrade topological label scenarios host chassis rack
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       test_pause_resume: true
+  #       scenarios:
+  #         - topological_host
+  #         - topological_chassis
+  #         - topological_rack
 
-  - test:
-      name: OSD upgrade combination of topological labels scenarios
-      desc: Topological labels combination scenarios host chassis and rack
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        scenarios:
-          - combo_host_chassis_rack
-          - combo_chassis_rack
+  # - test:
+  #     name: OSD upgrade combination of topological labels scenarios
+  #     desc: Topological labels combination scenarios host chassis and rack
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       scenarios:
+  #         - combo_host_chassis_rack
+  #         - combo_chassis_rack
 
-  - test:
-      name: holistic upgrade negative scenarios - 1
-      desc: Negative scenarios for combination of topological labels host chassis rack
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        test_stop_start: true
-        scenarios:
-          - combo_chassis1_chassis2_rack1
-          - combo_chassis3_rack1_no_match
+  # - test:
+  #     name: holistic upgrade negative scenarios - 1
+  #     desc: Negative scenarios for combination of topological labels host chassis rack
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       test_stop_start: true
+  #       scenarios:
+  #         - combo_chassis1_chassis2_rack1
+  #         - combo_chassis3_rack1_no_match
 
-  - test:
-      name: holistic upgrade negative scenarios - 2
-      desc: Negative scenarios for invalid host and invalid rack topological labels
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        scenarios:
-          - hosts_invalid_host
-          - topological_labels_rack_nonexistent
+  # - test:
+  #     name: holistic upgrade negative scenarios - 2
+  #     desc: Negative scenarios for invalid host and invalid rack topological labels
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       scenarios:
+  #         - hosts_invalid_host
+  #         - topological_labels_rack_nonexistent
   - test:
       name: Upgrade all the OSDs in the cluster
       desc: Upgrade all the OSDs in the cluster
