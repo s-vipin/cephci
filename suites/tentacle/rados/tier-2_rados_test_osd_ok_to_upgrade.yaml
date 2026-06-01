@@ -1,6 +1,5 @@
 # Suite is to be used to verify osd ok-to-upgrade feature
 # to be run in regression conf: conf/tentacle/rados/16-node-cluster-1-client.yaml
-
 tests:
   - test:
       name: setup install pre-requisistes
@@ -18,6 +17,7 @@ tests:
         base_cmd_args:
           verbose: true
         args:
+          # registry-json: registry.redhat.io
           mon-ip: node1
           orphan-initial-daemons: true
           skip-dashboard: true

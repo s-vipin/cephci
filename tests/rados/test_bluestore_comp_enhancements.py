@@ -2133,9 +2133,9 @@ Steps:
                     # Bug https://bugzilla.redhat.com/show_bug.cgi?id=2427146
                     # If offset of blob is 18446744073709551615 means INVALID_EXTENT
                     # Which means it is empty
-                    if int(blob["extents"][0]["offset"]) >= 18446744073709551615:
+                    if str(blob["offset"]) == "18446744073709551615":
                         log.info(
-                            f"Blob {blob} has INVALID_EXTENT. Skipping validation."
+                            f"Blob {blob_detail['offset']} is INVALID_EXTENT. Skipping validation."
                         )
                         continue
                     if compressed_length == 0:
