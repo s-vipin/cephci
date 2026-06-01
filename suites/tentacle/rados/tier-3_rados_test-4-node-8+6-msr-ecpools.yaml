@@ -22,7 +22,7 @@ tests:
                 verbose: true
               args:
                 mon-ip: node1
-                rhcs-version: 8.1
+                rhcs-version: 9.0
                 release: rc
                 platform: rhel-9
                 skip-monitoring-stack: true
@@ -144,7 +144,7 @@ tests:
         id: client.1                      # client Id (<type>.<Id>)
         nodes:                            # client node
           - node6:
-              release: 8.1
+              release: 9.0
               tag: rc
         install_packages:
           - ceph-common

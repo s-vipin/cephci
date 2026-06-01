@@ -162,7 +162,7 @@ def run(ceph_cluster, **kw):
 
             # IBM Storage Ceph 9.1 and greater would require license acceptance
             # There is '--automatically-accept-license' option
-            if product == "ibm" and LooseVersion(_rhcs_version) >= LooseVersion("9.1"):
+            if product == "ibm" and LooseVersion(str(_rhcs_version)) >= LooseVersion("9.1"):
                 license_cmd = (
                     f"ceph orch accept-license --image {config['container_image']}"
                 )
