@@ -25,7 +25,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ceph.rados.core_workflows import RadosOrchestrator
 from ceph.rados.mgr_workflows import MgrWorkflows
-from ceph.rados.monitor_workflows import MonitorWorkflows
 from ceph.waiter import WaitUntil
 from cli.utilities.utils import reboot_node
 from utility.log import Log
@@ -2100,7 +2099,7 @@ def _kill_daemon(
 
 
 # ---------------------------------------------------------------------------
-#  OSD SIGKILL/SIGTERM thrashing
+#  OSD SIGKILL Thrashing
 # ---------------------------------------------------------------------------
 
 
@@ -2109,7 +2108,6 @@ def thrash_osd_sigkill(
     osd_list: List[int],
     iterations: int,
     stop_flag: Dict,
-    cluster_fsid: str,
 ) -> int:
     """
     Thrash OSDs by sending SIGKILL/SIGTERM to simulate abrupt daemon crashes.
@@ -2131,12 +2129,11 @@ def thrash_osd_sigkill(
         osd_list: List of OSD IDs eligible for thrashing
         iterations: Number of thrashing iterations
         stop_flag: Dict with 'stop' key to signal early termination
-        cluster_fsid: Pre-fetched cluster FSID (avoids per-call ``ceph fsid``
-            overhead).
 
     Returns:
         Number of iterations completed
     """
+    cluster_fsid = rados_obj.run_ceph_command(cmd="ceph fsid")["fsid"]
     log.info(
         "Starting OSD SIGKILL thrashing " "(iterations: %s, osd_list: %s, fsid: %s)",
         iterations,
@@ -2210,26 +2207,25 @@ def thrash_osd_sigkill(
 
 
 # ---------------------------------------------------------------------------
-#  MON and MGR SIGKILL/SIGTERM Thrashing
+#  MON / MGR SIGKILL Helpers
 # ---------------------------------------------------------------------------
 
 
-def thrash_mon_sigkill(
-    rados_obj: RadosOrchestrator, mon_workflow_obj: MonitorWorkflows, cluster_fsid: str
+def _thrash_mon_sigkill(
+    rados_obj: RadosOrchestrator, mon_workflow_obj, cluster_fsid: str
 ) -> bool:
     """
     Kill a random MON daemon with SIGKILL/SIGTERM to simulate an abrupt crash.
 
     Delegates the actual kill to ``_kill_daemon`` which uses
     ``systemctl kill --signal=<SIGKILL|SIGTERM>`` to precisely target the MON
-    service.
+    service. Maintains quorum safety by only killing one MON at a time and
+    verifying there are enough MONs to sustain quorum before proceeding.
 
     Args:
         rados_obj: RadosOrchestrator instance.
         mon_workflow_obj: MonitorWorkflows instance.
         cluster_fsid: Pre-fetched cluster FSID (avoids per-call overhead).
-        recovery_timeout: Seconds to wait for the MON to rejoin quorum
-            (default: 120).
     """
     try:
         quorum_hosts = mon_workflow_obj.get_mon_quorum_hosts()
@@ -2245,44 +2241,30 @@ def thrash_mon_sigkill(
         if not _kill_daemon(rados_obj, "mon", target_mon, cluster_fsid):
             return False
 
-        host = rados_obj.fetch_host_node(daemon_type="mon", daemon_id=str(target_mon))
-        service_name = f"ceph-{cluster_fsid}@mon.{target_mon}.service"
-        host.exec_command(
-            sudo=True,
-            cmd=f"systemctl restart {service_name}",
-        )
-
-        # Poll for quorum re-entry (every 10s, up to recovery_timeout)
-        poll_interval = 10
-        recovery_timeout = 120
-        for elapsed in range(
-            poll_interval, recovery_timeout + poll_interval, poll_interval
-        ):
-            try:
-                quorum_after = mon_workflow_obj.get_mon_quorum_hosts()
-                if target_mon in quorum_after:
-                    log.info(
-                        "MON %s rejoined quorum after %ss",
-                        target_mon,
-                        elapsed,
-                    )
-                    return True
-                log.debug(
-                    "MON recovery poll %ss/%ss: %s not yet in quorum %s",
-                    elapsed,
-                    recovery_timeout,
-                    target_mon,
-                    quorum_after,
-                )
-            except Exception:
-                log.debug("MON recovery poll %ss: quorum query failed", elapsed)
-            time.sleep(poll_interval)
-
+        time.sleep(30)
         quorum_after = mon_workflow_obj.get_mon_quorum_hosts()
-        log.warning(
-            "MON %s did not rejoin quorum within %ss. Current quorum: %s",
+
+        if target_mon in quorum_after:
+            log.info(
+                "MON %s recovered and rejoined quorum after SIGKILL",
+                target_mon,
+            )
+            return True
+
+        log.info(
+            "MON %s not yet in quorum, waiting additional 30s...",
             target_mon,
-            recovery_timeout,
+        )
+        time.sleep(30)
+        quorum_after = mon_workflow_obj.get_mon_quorum_hosts()
+
+        if target_mon in quorum_after:
+            log.info("MON %s rejoined quorum after extended wait", target_mon)
+            return True
+
+        log.warning(
+            "MON %s did not rejoin quorum after SIGKILL.Current quorum: %s",
+            target_mon,
             quorum_after,
         )
         return False
@@ -2292,22 +2274,23 @@ def thrash_mon_sigkill(
         return False
 
 
-def thrash_mgr_sigkill(
+def _thrash_mgr_sigkill(
     rados_obj: RadosOrchestrator,
     mgr_workflow_obj: MgrWorkflows,
     cluster_fsid: str,
-    recovery_timeout: int = 120,
 ) -> bool:
     """
-     Selects a random MGR (active or standby) and verifies an active
+    Kill a random MGR daemon with SIGKILL/SIGTERM to simulate an abrupt crash.
+
+    Delegates the actual kill to ``_kill_daemon`` which uses
+    ``systemctl kill --signal=<SIGKILL|SIGTERM>`` to precisely target the MGR
+    service. Selects a random MGR (active or standby) and verifies an active
     MGR is available post-kill.
 
     Args:
         rados_obj: RadosOrchestrator instance.
         mgr_workflow_obj: MgrWorkflows instance.
         cluster_fsid: Pre-fetched cluster FSID (avoids per-call overhead).
-        recovery_timeout: Seconds to wait for an active MGR to appear
-            (default: 120).
     """
     try:
         mgr_list = mgr_workflow_obj.get_mgr_daemon_list()
@@ -2323,41 +2306,25 @@ def thrash_mgr_sigkill(
         if not _kill_daemon(rados_obj, "mgr", target_mgr, cluster_fsid):
             return False
 
-        host = rados_obj.fetch_host_node(daemon_type="mgr", daemon_id=str(target_mgr))
-        service_name = f"ceph-{cluster_fsid}@mgr.{target_mgr}.service"
-        host.exec_command(
-            sudo=True,
-            cmd=f"systemctl restart {service_name}",
-        )
+        time.sleep(30)
 
-        # Poll for an active MGR (every 10s, up to recovery_timeout)
-        poll_interval = 10
-        recovery_timeout = 120
-        for elapsed in range(
-            poll_interval, recovery_timeout + poll_interval, poll_interval
-        ):
-            try:
-                new_active = mgr_workflow_obj.get_active_mgr()
-                if new_active:
-                    log.info(
-                        "MGR cluster healthy after SIGKILL of %s. Active MGR: %s (recovered in %ss)",
-                        target_mgr,
-                        new_active,
-                        elapsed,
-                    )
-                    return True
-                log.debug(
-                    "MGR recovery poll %ss/%ss: no active MGR yet",
-                    elapsed,
-                    recovery_timeout,
-                )
-            except Exception:
-                log.debug("MGR recovery poll %ss: mgr query failed", elapsed)
-            time.sleep(poll_interval)
+        new_active = mgr_workflow_obj.get_active_mgr()
+        if new_active:
+            log.info(
+                "MGR cluster healthy after SIGKILL of %s. Active MGR: %s",
+                target_mgr,
+                new_active,
+            )
+            return True
 
-        log.warning(
-            "No active MGR after SIGKILL of %s within %ss", target_mgr, recovery_timeout
-        )
+        log.info("No active MGR yet, waiting additional 30s for recovery...")
+        time.sleep(30)
+        new_active = mgr_workflow_obj.get_active_mgr()
+        if new_active:
+            log.info("MGR recovered after extended wait. Active: %s", new_active)
+            return True
+
+        log.warning("No active MGR after SIGKILL of %s", target_mgr)
         return False
 
     except Exception as e:
