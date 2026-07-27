@@ -42,7 +42,7 @@ def run(ceph_cluster, **kw) -> int:
 
     log.info(f"Detected release: {release} (from rhbuild: {rhbuild})")
 
-    ref_path = f"conf/{release}/rados/test-confs/ceph_config_defaults.tsv"
+    ref_path = f"conf/{release}/rados/test-confs/ceph_config_defaults_{rhbuild}.tsv"
     reference, override_params = _load_reference_tsv(ref_path)
     if not reference:
         log.error(f"Failed to load reference TSV from: {ref_path}")
