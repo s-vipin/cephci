@@ -4,7 +4,7 @@ at different scenarios
 """
 
 import random
-
+from tests.rados.monitor_configurations import MonConfigMethods
 from ceph.ceph_admin import CephAdmin
 from ceph.rados.core_workflows import RadosOrchestrator
 from ceph.rados.monitor_workflows import MonitorWorkflows
@@ -106,7 +106,11 @@ def run(ceph_cluster, **kw):
     mon_workflow_obj = MonitorWorkflows(node=cephadm)
     start_time = get_cluster_timestamp(rados_obj.node)
     log.debug(f"Test workflow started. Start time: {start_time}")
+    mon_obj = MonConfigMethods(rados_obj=rados_obj)
     try:
+        mon_obj.set_config(section="osd", name="debug_osd", value="20/20")
+        mon_obj.set_config(section="mon", name="debug_mon", value="20/20")
+        mon_obj.set_config(section="mgr", name="debug_mgr", value="20/20")
         # Collect mon details such as name, rank and number of mons
         mon_nodes = ceph_cluster.get_nodes(role="mon")
         osd_nodes = ceph_cluster.get_nodes(role="osd")
@@ -352,6 +356,10 @@ def run(ceph_cluster, **kw):
         if not mon_workflow_obj.set_mon_service_managed_type(unmanaged=False):
             log.error("Could not set the mon service to managed")
             return 1
+
+        mon_obj.remove_config(section="osd", name="debug_osd")
+        mon_obj.remove_config(section="mon", name="debug_mon")
+        mon_obj.remove_config(section="mgr", name="debug_mgr")
 
         # log cluster health
         rados_obj.log_cluster_health()
