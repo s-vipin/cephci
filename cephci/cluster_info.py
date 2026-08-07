@@ -174,6 +174,7 @@ def get_ceph_var_logs(cluster, log_dir):
         node.exec_command(
             cmd=f"tar -C / --warning=no-file-changed -cvzf {tar_file} {_CEPH_VAR_LOG_DIR}",
             sudo=True,
+            check_ec=False,
         )
 
         node.download_file(
