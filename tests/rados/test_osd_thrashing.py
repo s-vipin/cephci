@@ -44,15 +44,34 @@ Core Chaos Workflows:
 
 Daemon Failover Workflows:
   - **MON thrashing** (``enable_mon_thrashing``): Leader failover, rolling
-    restart, election strategy changes (classic/disallow/connectivity).
-    Verifies quorum stability and client reconnection.
+    restart, SIGKILL daemon kill, election strategy changes
+    (classic/disallow/connectivity).  Verifies quorum stability and client
+    reconnection under both graceful and abrupt daemon exits.
   - **MGR thrashing** (``enable_mgr_thrashing``): Failover active MGR,
-    rolling restart, random daemon fail.  Validates module continuity.
+    rolling restart, random daemon fail, SIGKILL daemon kill.  Validates
+    module continuity and orchestrator auto-restart after abrupt crashes.
+  - **OSD SIGKILL thrashing** (``enable_osd_sigkill_thrashing``): Kill
+    random OSD processes with ``kill -9`` to simulate abrupt crashes,
+    bypassing all shutdown handlers.  Stresses PG peering, journal replay,
+    and BlueStore recovery.
   - **MDS thrashing** (``enable_mds_thrashing``): Active MDS failover,
     rolling restart, random fail.  CephFS I/O must survive rank transitions.
+  - **Node reboot thrashing** (``enable_node_reboot_thrashing``): Full
+    host-level chaos using six randomly-selected scenarios per iteration:
+    (1) single host orch maintenance enter/exit, (2) maintenance + reboot,
+    (3) rolling restart of all OSD hosts, (4) rolling OSD stop/start via
+    orch, (5) direct node reboot without maintenance mode,
+    (6) SIGKILL + reboot combo.  Verifies OSD recovery after each scenario.
 
 I/O Workloads:
   - **CephFS FIO** (``enable_fio_cephfs``): FIO on kernel-mounted CephFS
+  - **CephFS VDBench** (``enable_vdbench_cephfs``): VDBench filesystem IO
+    with 6 profiles (sequential write 1M, random mixed 70/30 256K,
+    small file ops 4K, etc.) with data validation
+  - **RBD VDBench** (``enable_vdbench_rbd``): VDBench block IO with 7
+    profiles (random write 4K, random read 8K, mixed 50/50 64K, etc.)
+    with data validation. Derived from ocs-ci chaos configurations that
+    caught IBMCEPH-13477.
     with snapshot thrashing (periodic ``snap create`` / ``snap rm``).
   - **RBD FIO** (``enable_fio_rbd``): FIO on mapped RBD image with
     snapshot thrashing (``rbd snap create`` / ``rbd snap rm``).
@@ -127,15 +146,18 @@ TEST WORKFLOW:
     │   ├── monitor_cluster_health: Periodic ceph health detail + ceph -s logging [always]
     │   ├── _run_fio_workload (CephFS): FIO with snapshots on work directory [if enabled]
     │   ├── _run_fio_workload (RBD): FIO on mounted RBD image [if enabled]
+    │   ├── _run_vdbench_workload (CephFS): VDBench 6-profile FS IO + validation [if enabled]
+    │   ├── _run_vdbench_workload (RBD): VDBench 7-profile block IO + validation [if enabled]
     │   ├── thrash_cephfs_snapshots: 5 snaps/iter, parallel writes, ~20% deletion [if enabled]
     │   ├── thrash_rbd_snapshots: 4 snaps/iter, protect, clone, flatten, ~20% deletion [if enabled]
     │   ├── thrash_ec_pool_snapshots: RADOS-level snapshots + partial writes [if enabled]
     │   ├── thrash_osds: Mark out → orch daemon stop → wait → mark in → start [if enabled]
+    │   ├── thrash_osd_sigkill: kill -9 random OSD processes → auto-restart [if enabled]
     │   ├── thrash_crush_weights: Reduce to 50% → restore [if enabled]
     │   ├── thrash_pg_count: Bulk flag toggle for PG split/merge [if enabled]
     │   ├── thrash_scrubs: Periodic scrub/deep-scrub on pools/OSDs/cluster [if enabled]
     │   ├── thrash_rgw_s3: S3 PUT/GET/DELETE/multipart on RGW [if enabled]
-    │   ├── thrash_mon: Leader failover, rolling restart, election strategy [if enabled]
+    │   ├── thrash_mon: Leader failover, rolling restart, sigkill, election strategy [if enabled]
     │   ├── thrash_mgr: Failover, rolling restart, random fail [if enabled]
     │   ├── thrash_mds: Failover, rolling restart, random fail [if enabled]
     │   ├── thrash_nfs_fio: Mount/FIO/FS ops/unmount cycles on NFS exports [if enabled]
@@ -143,7 +165,9 @@ TEST WORKFLOW:
     │   ├── nfs protocol state threads: client/export/admin churn [if enabled]
     │   ├── thrash_smb: SMB daemon chaos loops [if enabled]
     │   ├── thrash_smb_client_io: SMB client operations under chaos [if enabled]
-    │   └── thrash_cephfs_subvolumes: Create/ops/delete subvolume groups+subvols [if enabled]
+    │   ├── thrash_cephfs_subvolumes: Create/ops/delete subvolume groups+subvols [if enabled]
+    │   ├── thrash_node_reboot: Host-level chaos (6 scenarios at random) [if enabled]
+    │   └── thrash_network_faults: tc netem fault injection on random nodes [if enabled]
     │
     ├── VALIDATION PHASE
     │   ├── Wait for cluster stabilization (active+clean PGs)
@@ -195,10 +219,16 @@ CONFIGURATION OPTIONS:
 - num_osds_to_inject: Number of OSDs to inject errors on (default: 3)
 - enable_fio_cephfs: Enable FIO workload on CephFS mount (default: True)
 - enable_fio_rbd: Enable FIO workload on RBD mount (default: True)
+- enable_vdbench_cephfs: Enable VDBench workload on CephFS mount (default: False)
+- enable_vdbench_rbd: Enable VDBench workload on RBD mount (default: False)
+- vdbench_config: Override dict for VDBench profiles. Supports ``block``
+  and ``filesystem`` sub-keys with ``profiles``, ``elapsed``, ``interval``,
+  ``threads``, and ``validate`` overrides.
 - enable_cephfs_snapshots: Enable CephFS snapshot thrashing (default: True)
 - enable_rbd_snapshots: Enable RBD snapshot thrashing (default: True)
 - enable_ec_snapshots: Enable EC pool snapshot thrashing (default: True)
 - enable_osd_thrashing: Enable OSD thrashing operations (default: True)
+- enable_osd_sigkill_thrashing: Enable OSD SIGKILL thrashing - kill -9 crashes (default: False)
 - enable_rgw_thrashing: Enable RGW S3 thrashing (default: False)
 - enable_mon_thrashing: Enable MON thrashing - leader failover/restart (default: False)
 - enable_mgr_thrashing: Enable MGR thrashing - failover/restart/random fail (default: False)
@@ -226,6 +256,14 @@ CONFIGURATION OPTIONS:
 - smb_num_shares: Number of SMB shares per cluster for setup (default: 4)
 - smb_user_name / smb_user_password: SMB credentials for client IO checks
 - enable_smb_rados_config_check: Validate SMB RADOS metadata post-thrash (default: False)
+- enable_node_reboot_thrashing: Enable node reboot thrashing - full host-level chaos (default: False)
+- node_reboot_wait: Seconds to wait after issuing reboot before polling (default: 120)
+- node_reboot_iterations: Override iteration count (default: iterations // 4)
+- enable_network_thrashing: Enable tc netem network fault injection thread (default: False)
+- network_fault_types: List of fault types to inject (default: ["loss", "delay", "duplicate", "corrupt"])
+- network_fault_duration: Seconds to hold each fault before removal (default: 30)
+- network_fault_iterations: Number of inject/remove cycles (default: 4)
+- network_fault_target_scope: Node selection strategy - "random", "all", "osd", "mon" (default: "random")
 - enable_esb_verification: Enable BlueStore ESB Bug #70390 verification (default: False).
   Sets bluestore_elastic_shared_blobs=true, bluestore_write_v2=false, bluestore_onode_segment_size=0,
   bluestore_debug_extent_map_encode_check=true, debug_bluestore=5/5.
@@ -265,11 +303,15 @@ from tests.rados.thrash_helpers import (
     _nfs_client_mount_option_string,
     _nfs_export_mount_targets,
     _nfs_mount_context,
+    _thrash_mgr_sigkill,
+    _thrash_mon_sigkill,
     check_mount_health,
     thrash_nfs_admin_ops,
     thrash_nfs_client_churn,
     thrash_nfs_daemon_failover,
     thrash_nfs_export_churn,
+    thrash_node_reboot,
+    thrash_osd_sigkill,
     thrash_smb,
     thrash_smb_client_io,
     verify_data_integrity,
@@ -396,10 +438,14 @@ def run(ceph_cluster, **kw):
         enable_rgw_thrashing (bool): Enable RGW S3 thrashing (default: False, requires RGW)
         enable_fio_cephfs (bool): Enable FIO workload on CephFS mount (default: True)
         enable_fio_rbd (bool): Enable FIO workload on RBD mount (default: True)
+        enable_vdbench_cephfs (bool): Enable VDBench workload on CephFS mount (default: False)
+        enable_vdbench_rbd (bool): Enable VDBench workload on RBD mount (default: False)
+        vdbench_config (dict): VDBench config overrides with block/filesystem profiles
         enable_cephfs_snapshots (bool): Enable CephFS snapshot thrashing (default: True)
         enable_rbd_snapshots (bool): Enable RBD snapshot thrashing (default: True)
         enable_ec_snapshots (bool): Enable EC pool snapshot thrashing (default: True)
         enable_osd_thrashing (bool): Enable OSD thrashing - main thrash operation (default: True)
+        enable_osd_sigkill_thrashing (bool): Enable OSD SIGKILL thrashing - kill -9 (default: False)
         enable_scrub_thrashing (bool): Enable independent scrub/deep-scrub cycles (default: True)
         enable_mon_thrashing (bool): Enable MON thrashing - leader failover/restart (default: False)
         enable_mgr_thrashing (bool): Enable MGR thrashing - failover/restart/random fail (default: False)
@@ -435,6 +481,11 @@ def run(ceph_cluster, **kw):
         smb_user_password (str): SMB password for endpoint/client IO checks
             (default: smbpassword)
         enable_smb_rados_config_check (bool): RADOS config integrity for SMB (default: False)
+        enable_node_reboot_thrashing (bool): Enable node reboot thrashing with
+            six randomly-selected scenarios (default: False)
+        node_reboot_wait (int): Seconds after reboot before polling OSDs (default: 120)
+        node_reboot_iterations (int|None): Override iteration count; if None,
+            auto-computed as ``iterations // 4`` (default: None)
         error_injection (dict): Suite-driven error injection config (default: None).
             Supports profile, profile_overrides, configs, ec_write_errors,
             ec_read_errors, admin_socket. See CephErrorInjector for schema.
@@ -493,10 +544,14 @@ def run(ceph_cluster, **kw):
     enable_rgw_thrashing = config.get("enable_rgw_thrashing", True)
     enable_fio_cephfs = config.get("enable_fio_cephfs", True)
     enable_fio_rbd = config.get("enable_fio_rbd", True)
+    enable_vdbench_cephfs = config.get("enable_vdbench_cephfs", False)
+    enable_vdbench_rbd = config.get("enable_vdbench_rbd", False)
+    vdbench_config = config.get("vdbench_config", {})
     enable_cephfs_snapshots = config.get("enable_cephfs_snapshots", True)
     enable_rbd_snapshots = config.get("enable_rbd_snapshots", True)
     enable_ec_snapshots = config.get("enable_ec_snapshots", True)
     enable_osd_thrashing = config.get("enable_osd_thrashing", True)
+    enable_osd_sigkill_thrashing = config.get("enable_osd_sigkill_thrashing", False)
     enable_mon_thrashing = config.get("enable_mon_thrashing", True)
     enable_mgr_thrashing = config.get("enable_mgr_thrashing", False)
     enable_mds_thrashing = config.get("enable_mds_thrashing", False)
@@ -528,6 +583,21 @@ def run(ceph_cluster, **kw):
     enable_smb_thrashing = config.get("enable_smb_thrashing", False)
     smb_cluster_ids = config.get("smb_cluster_ids", [])
     enable_smb_rados_config_check = config.get("enable_smb_rados_config_check", False)
+
+    # Node reboot thrashing parameters
+    enable_node_reboot_thrashing = config.get("enable_node_reboot_thrashing", False)
+    node_reboot_wait = config.get("node_reboot_wait", 120)
+    node_reboot_iterations = config.get("node_reboot_iterations", None)
+
+    # Network fault thrashing parameters
+    enable_network_thrashing = config.get("enable_network_thrashing", False)
+    network_fault_types = config.get(
+        "network_fault_types", ["loss", "delay", "duplicate", "corrupt"]
+    )
+    network_fault_duration = config.get("network_fault_duration", 30)
+    network_fault_iterations = config.get("network_fault_iterations", 4)
+    network_fault_target_scope = config.get("network_fault_target_scope", "random")
+
     enable_fast_ec_config_params = config.get("enable_fast_ec_config_params", True)
     enable_esb_verification = config.get("enable_esb_verification", False)
     disabled_ec_optimizations = False
@@ -562,8 +632,8 @@ def run(ceph_cluster, **kw):
     )
 
     # Determine which pool types will be created based on enabled workflows
-    enable_cephfs_pools = enable_fio_cephfs or enable_cephfs_snapshots
-    enable_rbd_pools = enable_fio_rbd or enable_rbd_snapshots
+    enable_cephfs_pools = enable_fio_cephfs or enable_cephfs_snapshots or enable_vdbench_cephfs
+    enable_rbd_pools = enable_fio_rbd or enable_rbd_snapshots or enable_vdbench_rbd
 
     additional_pools = []
     if enable_cephfs_pools:
@@ -600,10 +670,13 @@ def run(ceph_cluster, **kw):
         f"  Writes to inject per OSD: {num_writes_to_inject if inject_errors else 0}\n"
         f"  FIO on CephFS: {enable_fio_cephfs}\n"
         f"  FIO on RBD: {enable_fio_rbd}\n"
+        f"  VDBench on CephFS: {enable_vdbench_cephfs}\n"
+        f"  VDBench on RBD: {enable_vdbench_rbd}\n"
         f"  CephFS snapshot thrashing: {enable_cephfs_snapshots}\n"
         f"  RBD snapshot thrashing: {enable_rbd_snapshots}\n"
         f"  EC pool snapshot thrashing: {enable_ec_snapshots}\n"
         f"  OSD thrashing: {enable_osd_thrashing}\n"
+        f"  OSD SIGKILL thrashing: {enable_osd_sigkill_thrashing}\n"
         f"  MON thrashing: {enable_mon_thrashing}\n"
         f"  MGR thrashing: {enable_mgr_thrashing}\n"
         f"  MDS thrashing: {enable_mds_thrashing}\n"
@@ -628,6 +701,22 @@ def run(ceph_cluster, **kw):
         f"  SMB thrashing: {enable_smb_thrashing}\n"
         + (f"  SMB cluster IDs: {smb_cluster_ids}\n" if enable_smb_thrashing else "")
         + f"  SMB RADOS config check: {enable_smb_rados_config_check}\n"
+        f"  Node reboot thrashing: {enable_node_reboot_thrashing}\n"
+        + (
+            f"  Node reboot wait: {node_reboot_wait}s\n"
+            f"  Node reboot iterations: {node_reboot_iterations or 'auto (iterations // 4)'}\n"
+            if enable_node_reboot_thrashing
+            else ""
+        )
+        + f"  Network fault thrashing: {enable_network_thrashing}\n"
+        + (
+            f"  Network fault types: {network_fault_types}\n"
+            f"  Network fault duration: {network_fault_duration}s\n"
+            f"  Network fault iterations: {network_fault_iterations}\n"
+            f"  Network fault target scope: {network_fault_target_scope}\n"
+            if enable_network_thrashing
+            else ""
+        )
     )
     _ei_config = config.get("error_injection", {})
     if _ei_config:
@@ -1386,10 +1475,13 @@ def run(ceph_cluster, **kw):
         max_workers = 3  # rados bench + comprehensive I/O + health monitoring
         max_workers += 1 if enable_fio_cephfs else 0
         max_workers += 1 if enable_fio_rbd else 0
+        max_workers += 1 if enable_vdbench_cephfs else 0
+        max_workers += 1 if enable_vdbench_rbd else 0
         max_workers += 1 if enable_cephfs_snapshots else 0
         max_workers += 1 if enable_rbd_snapshots else 0
         max_workers += 1 if enable_ec_snapshots else 0
         max_workers += 1 if enable_osd_thrashing else 0
+        max_workers += 1 if enable_osd_sigkill_thrashing else 0
         max_workers += 1 if enable_crush_thrashing else 0
         max_workers += 1 if enable_pg_thrashing else 0
         max_workers += 1 if enable_scrub_thrashing else 0
@@ -1410,6 +1502,10 @@ def run(ceph_cluster, **kw):
         max_workers += (
             1 if (enable_smb_thrashing and smb_config) else 0
         )  # smb_client_io
+        # Node reboot thrashing thread
+        max_workers += 1 if enable_node_reboot_thrashing else 0
+        # Network fault thrashing thread
+        max_workers += 1 if enable_network_thrashing else 0
         log.debug("ThreadPoolExecutor max_workers: %s", max_workers)
 
         with cf.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1446,6 +1542,8 @@ def run(ceph_cluster, **kw):
                     duration=duration,
                     stop_flag=stop_flag,
                     interval=30,
+                    rados_obj=rados_obj,
+                    enable_debug_logs=enable_debug_logs,
                 )
             )
 
@@ -1482,6 +1580,40 @@ def run(ceph_cluster, **kw):
                 )
             elif enable_fio_rbd:
                 log.warning("FIO RBD enabled but mount path not available")
+
+            # VDBench workload on CephFS (default: disabled)
+            if enable_vdbench_cephfs and cephfs_mount_path:
+                log.info("VDBench workload on CephFS enabled")
+                futures.append(
+                    executor.submit(
+                        _run_vdbench_workload,
+                        client_node=client_node,
+                        mount_path=cephfs_mount_path,
+                        workload_name="cephfs",
+                        duration=duration,
+                        stop_flag=stop_flag,
+                        vdbench_config=vdbench_config,
+                    )
+                )
+            elif enable_vdbench_cephfs:
+                log.warning("VDBench CephFS enabled but mount path not available")
+
+            # VDBench workload on RBD (default: disabled)
+            if enable_vdbench_rbd and rbd_mount_path:
+                log.info("VDBench workload on RBD enabled")
+                futures.append(
+                    executor.submit(
+                        _run_vdbench_workload,
+                        client_node=client_node,
+                        mount_path=rbd_mount_path,
+                        workload_name="rbd",
+                        duration=duration,
+                        stop_flag=stop_flag,
+                        vdbench_config=vdbench_config,
+                    )
+                )
+            elif enable_vdbench_rbd:
+                log.warning("VDBench RBD enabled but mount path not available")
 
             # CephFS snapshot thrashing (create, modify, rollback) (default: enabled)
             if enable_cephfs_snapshots and cephfs_mount_path:
@@ -1543,6 +1675,19 @@ def run(ceph_cluster, **kw):
                         aggressive=aggressive,
                         stop_flag=stop_flag,
                         reboot_osd=reboot_osd,
+                    )
+                )
+
+            # OSD SIGKILL thrashing (kill -9 to simulate abrupt crashes)
+            if enable_osd_sigkill_thrashing:
+                log.info("OSD SIGKILL thrashing enabled")
+                futures.append(
+                    executor.submit(
+                        thrash_osd_sigkill,
+                        rados_obj=rados_obj,
+                        osd_list=osd_list,
+                        iterations=iterations // 2,
+                        stop_flag=stop_flag,
                     )
                 )
 
@@ -1795,6 +1940,27 @@ def run(ceph_cluster, **kw):
             elif enable_smb_thrashing:
                 log.warning("SMB thrashing enabled but no SMB config available")
 
+            # Node reboot thrashing (full-node reboot with recovery verification)
+            if enable_node_reboot_thrashing:
+                _nr_iters = node_reboot_iterations or max(iterations // 4, 2)
+                log.info(
+                    "Node reboot thrashing enabled (%d iterations, %ds wait)",
+                    _nr_iters,
+                    node_reboot_wait,
+                )
+                futures.append(
+                    executor.submit(
+                        thrash_node_reboot,
+                        rados_obj=rados_obj,
+                        ceph_cluster=ceph_cluster,
+                        osd_list=osd_list,
+                        iterations=_nr_iters,
+                        stop_flag=stop_flag,
+                        reboot_wait=node_reboot_wait,
+                        installer_hostname=cephadm.installer.node.hostname,
+                    )
+                )
+
             log.info(f"Thrashing operations in progress (max duration: {duration}s)...")
             try:
                 for future in cf.as_completed(futures, timeout=duration):
@@ -1859,6 +2025,7 @@ def run(ceph_cluster, **kw):
                 "nfs_admin_ops": None,
                 "smb_daemon_thrashing": None,
                 "smb_client_io": None,
+                "node_reboot_thrashing": None,
             }
             # Map futures to workflow names based on their index
             workflow_order = []
@@ -1882,6 +2049,8 @@ def run(ceph_cluster, **kw):
                 workflow_order.append("ec_pool_snapshots")
             if enable_osd_thrashing:
                 workflow_order.append("osd_thrashing")
+            if enable_osd_sigkill_thrashing:
+                workflow_order.append("osd_sigkill_thrashing")
             if enable_crush_thrashing:
                 workflow_order.append("crush_weight_thrashing")
             if enable_pg_thrashing:
@@ -1914,6 +2083,10 @@ def run(ceph_cluster, **kw):
             if enable_smb_thrashing and smb_config:
                 workflow_order.append("smb_daemon_thrashing")
                 workflow_order.append("smb_client_io")
+            if enable_node_reboot_thrashing:
+                workflow_order.append("node_reboot_thrashing")
+            if enable_network_thrashing:
+                workflow_order.append("network_fault_thrashing")
 
             for idx, future in enumerate(futures):
                 workflow_name = (
@@ -3137,10 +3310,19 @@ def comprehensive_io_workload(
 
 
 def monitor_cluster_health(
-    client_node, start_time: str, duration: int, stop_flag: dict, interval: int = 30
+    client_node,
+    start_time: str,
+    duration: int,
+    stop_flag: dict,
+    interval: int = 30,
+    rados_obj=None,
+    enable_debug_logs: bool = False,
 ) -> int:
     """
     Periodically log `ceph health detail` and `ceph -s` with elapsed time.
+
+    Also checks and rotates Ceph daemon log files that exceed 1 crore lines
+    when enable_debug_logs is True and rados_obj is provided.
 
     Args:
         client_node: Client node to execute ceph commands
@@ -3148,6 +3330,8 @@ def monitor_cluster_health(
         duration: Total duration in seconds
         stop_flag: Dict with 'stop' key to signal early termination
         interval: Seconds between health checks (default: 30)
+        rados_obj: RadosOrchestrator instance for log rotation (optional)
+        enable_debug_logs: Gate log rotation checks (default: False)
 
     Returns:
         Number of health checks completed
@@ -3186,6 +3370,13 @@ def monitor_cluster_health(
 
         log.info(f"\n{'=' * 60}\n")
         check_count += 1
+
+        # Check and rotate logs if they exceed 1 crore lines
+        if enable_debug_logs and rados_obj:
+            try:
+                rados_obj.rotate_logs_by_line_count()
+            except Exception as e:
+                log.warning(f"Log rotation check failed: {e}")
 
         # Wait for next interval, checking stop_flag every 5s
         for _ in range(interval // 5):
@@ -3317,6 +3508,402 @@ def _run_fio_workload(
         return runs
     except Exception as e:
         log.warning(f"FIO {workload_name} error: {e}")
+        return runs
+
+
+def _generate_vdbench_config(
+    work_dir: str,
+    mode: str,
+    profiles: List[Dict],
+    elapsed: int = 120,
+    interval: int = 30,
+    threads: int = 8,
+    validate: bool = True,
+) -> str:
+    """
+    Generate a vdbench configuration file string from structured profiles.
+
+    Supports both block (sd/wd/rd) and filesystem (fsd/fwd/rd) modes. Each
+    profile dict in *profiles* must contain at least ``name`` and
+    ``xfersize``.  Block profiles require ``rdpct`` and ``seekpct``;
+    filesystem profiles require ``fileio`` (``random`` or ``sequential``)
+    and ``rdpct`` (omitted when fileio is sequential).
+
+    Args:
+        work_dir: Anchor directory (filesystem) or file path (block).
+        mode: ``"block"`` or ``"filesystem"``.
+        profiles: List of workload profile dicts.
+        elapsed: Seconds per run definition.
+        interval: Reporting interval in seconds.
+        threads: Default thread count.
+        validate: Whether to enable ``validate=yes``.
+
+    Returns:
+        Multi-line vdbench configuration string.
+    """
+    lines: List[str] = []
+    if validate:
+        lines.append("validate=yes")
+    lines.append("")
+
+    if mode == "filesystem":
+        lines.append(
+            f"fsd=fsd1,anchor={work_dir},depth=4,width=5,"
+            f"files=10,size=1m,openflags=o_direct"
+        )
+        lines.append("")
+        for idx, p in enumerate(profiles, 1):
+            is_seq = p.get("fileio") == "sequential"
+            line = f"fwd=fwd{idx},fsd=fsd1"
+            line += f",fileio={p.get('fileio', 'random')}"
+            line += f",xfersize={p['xfersize']}"
+            if not is_seq and "rdpct" in p:
+                line += f",rdpct={p['rdpct']}"
+            line += f",threads={p.get('threads', threads)}"
+            lines.append(line)
+        lines.append("")
+        lines.append(
+            f"rd=rd0,fwd=fwd*,elapsed=30,interval=10,fwdrate=max,format=yes"
+        )
+        lines.append(
+            f"rd=rd1,fwd=fwd*,elapsed={elapsed},interval={interval},fwdrate=max"
+        )
+    else:
+        lines.append(
+            f"sd=sd1,lun={work_dir},size=2g,"
+            f"threads={threads},openflags=o_direct"
+        )
+        lines.append("")
+        for idx, p in enumerate(profiles, 1):
+            line = f"wd=wd{idx},sd=sd1"
+            for key in ("rdpct", "seekpct", "xfersize"):
+                if key in p:
+                    line += f",{key}={p[key]}"
+            lines.append(line)
+        lines.append("")
+        lines.append(
+            f"rd=rd1,wd=wd*,elapsed={elapsed},interval={interval},iorate=max"
+        )
+
+    return "\n".join(lines)
+
+
+# ocs-ci VDBENCH IO profiles ported to cephci
+# Block profiles (RBD) — from krkn_chaos_config.yaml & resiliency_tests_config.yaml
+VDBENCH_BLOCK_PROFILES: List[Dict] = [
+    {"name": "random_write_4k", "rdpct": 0, "seekpct": 100, "xfersize": "4k"},
+    {"name": "random_read_8k", "rdpct": 100, "seekpct": 100, "xfersize": "8k"},
+    {"name": "mixed_50_50_64k", "rdpct": 50, "seekpct": 100, "xfersize": "64k"},
+    {"name": "mixed_70r_30w_4k", "rdpct": 70, "seekpct": 100, "xfersize": "4k"},
+    {"name": "seq_write_1m", "rdpct": 0, "seekpct": 0, "xfersize": "1m"},
+    {"name": "random_write_8k", "rdpct": 0, "seekpct": 100, "xfersize": "8k"},
+    {"name": "mixed_30r_70w_256k", "rdpct": 30, "seekpct": 100, "xfersize": "256k"},
+]
+
+# Filesystem profiles (CephFS) — from resiliency_tests_config.yaml
+VDBENCH_FS_PROFILES: List[Dict] = [
+    {"name": "random_write_4k", "fileio": "random", "rdpct": 0, "xfersize": "4k"},
+    {"name": "sequential_write_1m", "fileio": "sequential", "xfersize": "1m"},
+    {"name": "random_mixed_70r_256k", "fileio": "random", "rdpct": 70, "xfersize": "256k"},
+    {"name": "small_file_ops_4k", "fileio": "random", "rdpct": 50, "xfersize": "4k"},
+    {"name": "sequential_read_1m", "fileio": "sequential", "xfersize": "1m"},
+    {"name": "random_read_64k", "fileio": "random", "rdpct": 100, "xfersize": "64k"},
+]
+
+
+def _install_vdbench_if_needed(client_node) -> str:
+    """
+    Ensure vdbench and its Java dependency are installed on the client node.
+
+    Flow:
+        1. Fast path — if ``/opt/vdbench/vdbench`` exists AND ``java -version``
+           succeeds, return immediately (nothing to do).
+        2. Install Java 17 JRE (headless) via dnf or yum if ``java`` is not
+           available.  Raises RuntimeError if neither package manager succeeds.
+        3. Extract vdbench from the container image
+           ``quay.io/pakamble/vdbench:latest`` via podman if the binary is
+           missing.  Prunes dangling images afterwards.
+        4. Run ``vdbench -t`` (built-in self-test) to validate the install.
+           A failure here is logged as a warning but does not raise — the real
+           workload will produce a more actionable error later.
+
+    Args:
+        client_node: CephNode object with ``exec_command`` support.
+
+    Returns:
+        Absolute path to the vdbench launcher script (``/opt/vdbench/vdbench``).
+
+    Raises:
+        RuntimeError: If Java JRE installation fails via both dnf and yum.
+    """
+    vdbench_dir = "/opt/vdbench"
+    vdbench_bin = f"{vdbench_dir}/vdbench"
+    image = "quay.io/pakamble/vdbench:latest"
+
+    def _exec_output(cmd, **kwargs):
+        """Run a command and return stripped stdout as a string."""
+        kwargs.setdefault("sudo", True)
+        kwargs.setdefault("check_ec", False)
+        rc = client_node.exec_command(cmd=cmd, **kwargs)
+        stdout = rc[0] if isinstance(rc, tuple) else rc
+        if hasattr(stdout, "read"):
+            return stdout.read().decode().strip()
+        return str(stdout).strip()
+
+    # --- Fast path: both vdbench binary and Java already present ---
+    vdbench_present = "OK" in _exec_output(
+        f"test -x {vdbench_bin} && echo OK || echo MISSING"
+    )
+    java_present = "version" in _exec_output("java -version 2>&1 || true")
+
+    if vdbench_present and java_present:
+        log.info(f"vdbench already installed at {vdbench_bin} (Java OK)")
+        return vdbench_bin
+
+    # --- Step 1: Install Java JRE if missing ---
+    if not java_present:
+        log.info("Java not found — installing java-17-openjdk-headless...")
+        dnf_out = _exec_output(
+            "dnf install -y java-17-openjdk-headless 2>&1", timeout=600
+        )
+        # Check if dnf succeeded by verifying java is now available
+        java_check = _exec_output("java -version 2>&1 || true")
+        if "version" not in java_check:
+            log.info("dnf failed or unavailable, trying yum...")
+            yum_out = _exec_output(
+                "yum install -y java-17-openjdk-headless 2>&1", timeout=600
+            )
+            java_check = _exec_output("java -version 2>&1 || true")
+            if "version" not in java_check:
+                raise RuntimeError(
+                    "Failed to install Java JRE — vdbench requires Java. "
+                    f"dnf output: {dnf_out[-200:]}, yum output: {yum_out[-200:]}"
+                )
+        log.info("Java JRE installed successfully")
+
+    # --- Step 2: Extract vdbench from container if missing ---
+    if not vdbench_present:
+        log.info(f"Installing vdbench from container image {image}...")
+        client_node.exec_command(
+            cmd=f"mkdir -p {vdbench_dir}", sudo=True, check_ec=False
+        )
+        client_node.exec_command(
+            cmd=f"podman pull {image}", sudo=True, check_ec=False, timeout=300
+        )
+        client_node.exec_command(
+            cmd=(
+                f"cid=$(podman create {image} /bin/true) && "
+                f"podman cp $cid:/vdbench/. {vdbench_dir}/ && "
+                f"podman rm $cid"
+            ),
+            sudo=True,
+            check_ec=False,
+            timeout=300,
+        )
+        client_node.exec_command(
+            cmd=f"chmod +x {vdbench_bin}", sudo=True, check_ec=False
+        )
+        # Clean up dangling images (non-fatal)
+        client_node.exec_command(
+            cmd="podman image prune -f", sudo=True, check_ec=False, timeout=60
+        )
+        log.info(f"vdbench extracted to {vdbench_dir}")
+
+    # --- Step 3: Self-test ---
+    log.info("Running vdbench self-test (vdbench -t)...")
+    selftest_out = _exec_output(f"{vdbench_bin} -t 2>&1", timeout=120)
+    if "Vdbench execution completed successfully" not in selftest_out:
+        log.warning(
+            f"vdbench self-test did not report success. Output tail: "
+            f"{selftest_out[-300:]}"
+        )
+    else:
+        log.info("vdbench self-test passed")
+
+    return vdbench_bin
+
+
+def _run_vdbench_workload(
+    client_node,
+    mount_path: str,
+    workload_name: str,
+    duration: int,
+    stop_flag: Dict,
+    vdbench_config: Optional[Dict] = None,
+) -> int:
+    """
+    Run comprehensive VDBench workload with multiple IO profiles.
+
+    This mirrors ``_run_fio_workload`` but uses Oracle VDBench instead of
+    FIO.  All IO profiles are derived from the ocs-ci resiliency /
+    krkn_chaos VDBENCH configurations that caught real ODF bugs (e.g.
+    IBMCEPH-13477).
+
+    Phases per iteration:
+    1. Generate vdbench config (block or filesystem mode)
+    2. Write config to ``<mount_path>/vdbench_<name>/vdbench.conf``
+    3. Run ``vdbench -f <config> -v`` (``-v`` enables data validation)
+    4. Parse output for validation errors
+    5. Rotate through different profile subsets each iteration
+    6. Sleep between iterations
+
+    When ``workload_name`` is ``"cephfs"`` the filesystem profile set is
+    used (fsd/fwd/rd); when ``"rbd"`` the block profile set is used
+    (sd/wd/rd).
+
+    Args:
+        client_node: Client node to execute VDBench.
+        mount_path: Mount path (CephFS mount or RBD mount dir).
+        workload_name: ``"cephfs"`` or ``"rbd"`` — selects profile set.
+        duration: Total duration in seconds.
+        stop_flag: Dict with ``'stop'`` key to signal early termination.
+        vdbench_config: Optional override dict with ``block`` and/or
+            ``filesystem`` keys containing ``profiles`` lists plus
+            ``elapsed``, ``interval``, ``threads`` overrides.
+
+    Returns:
+        Number of VDBench runs completed.
+    """
+    log.info(f"Starting VDBench workload ({workload_name}) on: {mount_path}")
+    is_fs = workload_name == "cephfs"
+
+    vdbench_bin = _install_vdbench_if_needed(client_node)
+
+    cfg = vdbench_config or {}
+    mode_cfg = cfg.get("filesystem" if is_fs else "block", {})
+    elapsed = mode_cfg.get("elapsed", 120)
+    interval = mode_cfg.get("interval", 30)
+    threads = mode_cfg.get("threads", 8)
+    validate = mode_cfg.get("validate", True)
+
+    if is_fs:
+        all_profiles = mode_cfg.get("profiles", VDBENCH_FS_PROFILES)
+    else:
+        all_profiles = mode_cfg.get("profiles", VDBENCH_BLOCK_PROFILES)
+
+    work_dir = f"{mount_path}/vdbench_{workload_name}"
+    conf_path = f"{work_dir}/vdbench.conf"
+    output_dir = f"{work_dir}/output"
+
+    client_node.exec_command(
+        cmd=f"mkdir -p {work_dir} {output_dir}", sudo=True, check_ec=False
+    )
+
+    runs, end_time = 0, time.time() + duration
+    num_profiles = len(all_profiles)
+
+    try:
+        while time.time() < end_time and not stop_flag.get("stop"):
+            runs += 1
+
+            # Rotate through profile subsets: first run uses all, subsequent
+            # runs cycle through individual profiles then groups of 3
+            if runs == 1:
+                active_profiles = all_profiles
+            elif runs <= num_profiles + 1:
+                active_profiles = [all_profiles[(runs - 2) % num_profiles]]
+            else:
+                start = ((runs - num_profiles - 2) * 3) % num_profiles
+                active_profiles = [
+                    all_profiles[i % num_profiles]
+                    for i in range(start, start + min(3, num_profiles))
+                ]
+
+            profile_names = [p["name"] for p in active_profiles]
+            log.info(
+                f"VDBench {workload_name} iteration {runs}: "
+                f"profiles={profile_names}"
+            )
+
+            mode = "filesystem" if is_fs else "block"
+            anchor = work_dir if is_fs else f"{work_dir}/vdbench_data"
+
+            if not is_fs:
+                client_node.exec_command(
+                    cmd=f"truncate -s 2G {anchor} 2>/dev/null || true",
+                    sudo=True,
+                    check_ec=False,
+                )
+
+            config_str = _generate_vdbench_config(
+                work_dir=anchor,
+                mode=mode,
+                profiles=active_profiles,
+                elapsed=elapsed,
+                interval=interval,
+                threads=threads,
+                validate=validate,
+            )
+
+            # Write config file
+            escaped = config_str.replace("'", "'\\''")
+            client_node.exec_command(
+                cmd=f"cat > {conf_path} << 'VDBEOF'\n{config_str}\nVDBEOF",
+                sudo=True,
+                check_ec=False,
+            )
+
+            # Run vdbench: -v enables data validation, -o sets output dir
+            vdb_cmd = (
+                f"{vdbench_bin} -f {conf_path} -o {output_dir}/run_{runs}"
+            )
+            if validate:
+                vdb_cmd += " -v"
+
+            log.debug(f"VDBench cmd: {vdb_cmd}")
+            try:
+                out = client_node.exec_command(
+                    cmd=vdb_cmd,
+                    sudo=True,
+                    check_ec=False,
+                    timeout=elapsed + 120,
+                )
+                stdout = out[0] if isinstance(out, tuple) else out
+                if hasattr(stdout, "read"):
+                    stdout = stdout.read().decode()
+                else:
+                    stdout = str(stdout)
+
+                if "key blocks marked in error" in stdout:
+                    import re
+                    match = re.search(
+                        r"key blocks marked in error:\s*(\d+)", stdout
+                    )
+                    if match and int(match.group(1)) > 0:
+                        log.error(
+                            f"VDBench {workload_name} iteration {runs}: "
+                            f"DATA CORRUPTION — {match.group(1)} error blocks"
+                        )
+                    else:
+                        log.info(
+                            f"VDBench {workload_name} iteration {runs}: "
+                            "validation PASSED"
+                        )
+
+                if "Vdbench execution completed" in stdout:
+                    log.info(
+                        f"VDBench {workload_name} iteration {runs} completed"
+                    )
+                elif "error" in stdout.lower():
+                    log.warning(
+                        f"VDBench {workload_name} iteration {runs}: "
+                        f"possible error in output"
+                    )
+            except Exception as e:
+                log.warning(
+                    f"VDBench {workload_name} iteration {runs} error: {e}"
+                )
+
+            if stop_flag.get("stop"):
+                break
+
+            time.sleep(random.uniform(3, 8))
+
+        log.info(f"VDBench {workload_name} completed: {runs} iterations")
+        return runs
+
+    except Exception as e:
+        log.warning(f"VDBench {workload_name} error: {e}")
         return runs
 
 
@@ -5064,7 +5651,7 @@ def thrash_mon(
     iteration = 0
 
     # Build list of available operations
-    operations = ["leader_failover", "rolling_restart"]
+    operations = ["leader_failover", "rolling_restart", "sigkill"]
     if enable_election_strategy_thrash:
         operations.append("election_strategy")
 
@@ -5085,6 +5672,8 @@ def thrash_mon(
                 result = _thrash_mon_election_strategy(mon_election_obj)
             elif operation == "rolling_restart":
                 result = _thrash_mon_rolling_restart(rados_obj, mon_workflow_obj)
+            elif operation == "sigkill":
+                result = _thrash_mon_sigkill(rados_obj, mon_workflow_obj)
             else:
                 result = False
 
@@ -5240,6 +5829,7 @@ def thrash_mgr(
     1. Failover - Fail active MGR to trigger failover to standby
     2. Rolling restart - Restart MGR daemons via orchestrator
     3. Random fail - Fail a random MGR (active or standby)
+    4. SIGKILL - Kill random MGR process with kill -9 (abrupt crash)
 
     Args:
         rados_obj: RadosOrchestrator instance
@@ -5254,7 +5844,7 @@ def thrash_mgr(
     end_time = time.time() + duration
     iteration = 0
 
-    operations = ["failover", "rolling_restart", "random_fail"]
+    operations = ["failover", "rolling_restart", "random_fail", "sigkill"]
 
     log.info(
         f"Starting MGR thrashing with operations: {operations} "
@@ -5273,6 +5863,8 @@ def thrash_mgr(
                 result = _thrash_mgr_rolling_restart(rados_obj)
             elif operation == "random_fail":
                 result = _thrash_mgr_random_fail(mgr_workflow_obj)
+            elif operation == "sigkill":
+                result = _thrash_mgr_sigkill(rados_obj, mgr_workflow_obj)
             else:
                 result = False
 

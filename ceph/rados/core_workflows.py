@@ -4166,6 +4166,129 @@ EOF"""
         log.info("Completed setting/unsetting the network delay and packet drops")
         return True
 
+    def _resolve_host_and_interface(self, hostname):
+        """Resolve a hostname to a (host_obj, interface) tuple.
+
+        Shared by ``add_network_delay_on_host``, ``apply_network_fault_on_host``,
+        and ``verify_no_netem_on_host``.
+
+        Returns:
+            (CephNode, str) on success, (None, None) on failure.
+        """
+        host_nodes = self.ceph_cluster.get_nodes()
+        host_obj = None
+        for node in host_nodes:
+            if (
+                re.search(hostname, node.hostname)
+                or re.search(hostname, node.vmname)
+                or re.search(hostname, node.shortname)
+            ):
+                host_obj = node
+        if not host_obj:
+            log.error(f"Host object for host {hostname} could not be found")
+            return None, None
+
+        try:
+            host_obj.exec_command(sudo=True, cmd="rpm -qa | grep iproute")
+        except Exception:
+            host_obj.exec_command(sudo=True, cmd="yum install iproute -y")
+
+        interface = host_obj.search_ethernet_interface(host_nodes)
+        if not interface:
+            log.error(f"Could not determine network interface for {hostname}")
+            return None, None
+
+        return host_obj, interface
+
+    def apply_network_fault_on_host(
+        self, hostname, fault_rule="delay 100ms 20ms", set_fault=True
+    ) -> bool:
+        """Apply or remove an arbitrary tc netem fault rule on a host.
+
+        This is a generalised version of ``add_network_delay_on_host`` that
+        accepts any valid netem rule string (delay, loss, duplicate, corrupt,
+        or combinations thereof).
+
+        Args:
+            hostname: Name of the host (matched against hostname/vmname/shortname).
+            fault_rule: netem parameter string, e.g. ``"delay 100ms 20ms"``,
+                ``"loss 25%"``, ``"duplicate 5%"``, ``"corrupt 1%"``.
+            set_fault: If True, applies the fault; if False, removes all netem
+                rules from the interface.
+
+        Returns:
+            True on success, False on failure.
+        """
+        host_obj, interface = self._resolve_host_and_interface(hostname)
+        if not host_obj:
+            return False
+
+        log.debug(f"Resolved interface for {hostname}: {interface}")
+
+        if set_fault:
+            log.debug(
+                f"Removing any existing netem config on {hostname} before applying new fault"
+            )
+            try:
+                host_obj.exec_command(
+                    sudo=True,
+                    cmd=f"tc qdisc del dev {interface} root netem",
+                    check_ec=False,
+                )
+                time.sleep(1)
+            except Exception:
+                log.debug("No existing netem config to remove")
+
+            log.info(
+                f"Applying network fault on {hostname} "
+                f"(interface: {interface}): netem {fault_rule}"
+            )
+            fault_cmd = f"tc qdisc add dev {interface} root netem {fault_rule}"
+        else:
+            log.info(f"Removing network fault on {hostname} (interface: {interface})")
+            fault_cmd = f"tc qdisc del dev {interface} root netem"
+
+        try:
+            host_obj.exec_command(sudo=True, cmd=fault_cmd)
+            time.sleep(1)
+        except Exception as err:
+            log.error(f"Failed to apply/remove network fault on {hostname}: {err}")
+            return False
+
+        out, _ = host_obj.exec_command(sudo=True, cmd=f"tc qdisc show dev {interface}")
+        log.debug(f"Current tc qdisc config on {hostname}: {out}")
+        return True
+
+    def verify_no_netem_on_host(self, hostname) -> bool:
+        """Verify that no netem qdisc remains on a host's network interface.
+
+        Args:
+            hostname: Name of the host.
+
+        Returns:
+            True if no netem rules are present, False if netem is still active
+            or the check could not be performed.
+        """
+        host_obj, interface = self._resolve_host_and_interface(hostname)
+        if not host_obj:
+            return False
+
+        try:
+            out, _ = host_obj.exec_command(
+                sudo=True, cmd=f"tc qdisc show dev {interface}"
+            )
+            if "netem" in out:
+                log.error(
+                    f"netem still present on {hostname} "
+                    f"(interface: {interface}): {out.strip()}"
+                )
+                return False
+            log.debug(f"No netem on {hostname} (interface: {interface})")
+            return True
+        except Exception as err:
+            log.error(f"Failed to verify netem on {hostname}: {err}")
+            return False
+
     def configure_host_as_client(self, host_node):
         """
         Purpose of this module is to configure the ceph keyring and conf
@@ -7880,6 +8003,100 @@ EOF"""
         except Exception as e:
             log.warning(f"Failed to rotate logs: {e}")
             return False
+
+    def rotate_logs_by_line_count(
+        self, max_lines: int = 100000, keep_lines: int = 10000
+    ) -> bool:
+        """
+        Truncate Ceph log files that exceed max_lines (default: 1 crore).
+
+        Resolves OSD hosts internally via get_osd_hosts() + get_host_object().
+        For each host, lists log files, checks size (skips files < 1.5 GB),
+        counts lines on large files, and truncates keeping the last keep_lines.
+
+        Args:
+            max_lines: Trigger rotation when file exceeds this (default: 1 crore)
+            keep_lines: Lines to retain after truncation (default: 10 lakh)
+
+        Returns: True if any file was rotated, False otherwise
+        """
+        min_size_bytes = 1_500_000_000
+
+        hostnames = self.get_osd_hosts()
+        hosts = [self.get_host_object(h) for h in hostnames]
+        hosts = [h for h in hosts if h is not None]
+
+        if not hosts:
+            log.warning("No OSD hosts resolved for log rotation")
+            return False
+
+        log.debug(
+            f"Checking log files on {len(hosts)} host(s) "
+            f"(threshold: {max_lines} lines, keep: {keep_lines})"
+        )
+        rotated = False
+
+        for host in hosts:
+            try:
+                out, _ = host.exec_command(
+                    cmd="ls /var/log/ceph/ceph-*.log",
+                    sudo=True,
+                    check_ec=False,
+                    timeout=30,
+                )
+                if not out or not out.strip():
+                    continue
+
+                log_files = [f.strip() for f in out.strip().splitlines() if f.strip()]
+
+                for log_file in log_files:
+                    size_out, _ = host.exec_command(
+                        cmd=f"stat -c%s {log_file}",
+                        sudo=True,
+                        check_ec=False,
+                        timeout=15,
+                    )
+                    file_size = (
+                        int(size_out.strip()) if size_out.strip().isdigit() else 0
+                    )
+
+                    if file_size < min_size_bytes:
+                        continue
+
+                    lines_out, _ = host.exec_command(
+                        cmd=f"wc -l < {log_file}",
+                        sudo=True,
+                        check_ec=False,
+                        timeout=120,
+                    )
+                    line_count = (
+                        int(lines_out.strip()) if lines_out.strip().isdigit() else 0
+                    )
+
+                    if line_count <= max_lines:
+                        continue
+
+                    log.info(
+                        f"Rotating {log_file} on {host.hostname} "
+                        f"({line_count} lines > {max_lines})"
+                    )
+                    host.exec_command(
+                        cmd=f"tail -n {keep_lines} {log_file} > {log_file}.tmp",
+                        sudo=True,
+                        timeout=300,
+                    )
+                    host.exec_command(
+                        cmd=f"mv {log_file}.tmp {log_file}",
+                        sudo=True,
+                        timeout=30,
+                    )
+                    rotated = True
+                    log.info(f"Rotated {log_file}: kept last {keep_lines} lines")
+
+            except Exception as e:
+                log.warning(f"Log rotation failed on {host.hostname}: {e}")
+
+        return rotated
 
     def create_replicated_rbd_pools(
         self,

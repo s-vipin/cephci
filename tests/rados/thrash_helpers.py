@@ -23,6 +23,8 @@ import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
+from ceph.rados.core_workflows import RadosOrchestrator
+from ceph.rados.mgr_workflows import MgrWorkflows
 from ceph.waiter import WaitUntil
 from cli.utilities.utils import reboot_node
 from utility.log import Log
@@ -1935,3 +1937,988 @@ def thrash_smb_client_io(
         "[smb_io] Completed: io_ops=%s, errors=%s", result["io_ops"], result["errors"]
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+#  OSD SIGKILL Thrashing
+# ---------------------------------------------------------------------------
+
+
+def thrash_osd_sigkill(
+    rados_obj: RadosOrchestrator,
+    osd_list: List[int],
+    iterations: int,
+    stop_flag: Dict,
+) -> int:
+    """
+    Thrash OSDs by sending SIGKILL (kill -9) to simulate abrupt daemon crashes.
+
+    Per iteration:
+    1. Select 1-2 random OSDs
+    2. Resolve each OSD's host via ``ceph orch ps``
+    3. Send SIGKILL to the ceph-osd process for that specific OSD
+    4. Wait for orchestrator to auto-restart the daemon
+    5. Verify the OSD comes back up
+
+    Unlike the graceful out/in thrashing, SIGKILL bypasses all OSD shutdown
+    handlers (journal flush, PG state persistence), creating conditions that
+    stress PG peering, journal replay, and BlueStore recovery on startup.
+
+    Args:
+        rados_obj: RadosOrchestrator object
+        osd_list: List of OSD IDs eligible for thrashing
+        iterations: Number of thrashing iterations
+        stop_flag: Dict with 'stop' key to signal early termination
+
+    Returns:
+        Number of iterations completed
+    """
+    cluster_fsid = rados_obj.run_ceph_command(cmd="ceph fsid")["fsid"]
+    log.info(
+        f"Starting OSD SIGKILL thrashing "
+        f"(iterations: {iterations}, osd_pool: {osd_list}, fsid: {cluster_fsid})"
+    )
+    completed = 0
+
+    for iteration in range(iterations):
+        if stop_flag.get("stop"):
+            break
+
+        num_to_kill = min(random.randint(1, 2), len(osd_list))
+        target_osds = random.sample(osd_list, num_to_kill)
+
+        log.info(
+            f"SIGKILL iteration {iteration + 1}/{iterations}: "
+            f"Targeting OSD(s) {target_osds}"
+        )
+
+        killed = []
+        for osd_id in target_osds:
+            try:
+                host = rados_obj.fetch_host_node(
+                    daemon_type="osd", daemon_id=str(osd_id)
+                )
+                if not host:
+                    log.warning(f"Could not resolve host for OSD.{osd_id}")
+                    continue
+
+                service_name = f"ceph-{cluster_fsid}@osd.{osd_id}.service"
+                log.info(
+                    f"Sending SIGKILL to OSD.{osd_id} via "
+                    f"systemctl kill on {host.hostname} "
+                    f"(service: {service_name})"
+                )
+                host.exec_command(
+                    sudo=True,
+                    cmd=f"systemctl kill --signal=SIGKILL {service_name}",
+                )
+                killed.append(osd_id)
+
+            except Exception as e:
+                log.warning(f"Failed to SIGKILL OSD.{osd_id}: {e}")
+
+        if not killed:
+            log.warning(f"No OSDs were killed in iteration {iteration + 1}")
+            time.sleep(5)
+            continue
+
+        time.sleep(20)
+
+        for osd_id in killed:
+            try:
+                osd_status = rados_obj.run_ceph_command(
+                    cmd=f"ceph osd find {osd_id}", client_exec=True
+                )
+                if osd_status:
+                    log.info(f"OSD.{osd_id} recovered after SIGKILL")
+                else:
+                    log.warning(f"OSD.{osd_id} may not have recovered yet")
+            except Exception:
+                log.warning(f"Could not verify OSD.{osd_id} recovery status")
+
+        completed += 1
+        time.sleep(random.uniform(5, 10))
+
+    log.info(f"OSD SIGKILL thrashing completed: {completed} iterations")
+    return completed
+
+
+# ---------------------------------------------------------------------------
+# Node Reboot Thrashing -- six chaos scenarios picked at random each iteration
+# ---------------------------------------------------------------------------
+#
+# The scenarios mirror ODF node-maintenance patterns, adapted for bare Ceph:
+#
+# 1. single_host_maintenance   -- enter orch maintenance, verify cluster IO,
+#                                  exit maintenance, verify recovery
+# 2. maintenance_plus_reboot   -- enter maintenance, reboot the host, wait
+#                                  for SSH + orch online, exit maintenance
+# 3. rolling_node_restart      -- reboot every OSD host one at a time
+# 4. rolling_osd_stop_start    -- systemctl-stop all OSDs on a host, sleep
+#                                  60-120s, restart them, one host at a time
+# 5. direct_node_reboot        -- reboot a single OSD host (no maintenance
+#                                  mode), wait for OSDs to rejoin
+# 6. sigkill_plus_reboot       -- SIGKILL a random OSD, then reboot its
+#                                  host, verifying crash recovery path
+#
+
+NODE_REBOOT_SCENARIOS = [
+    "single_host_maintenance",
+    "maintenance_plus_reboot",
+    "rolling_node_restart",
+    "rolling_osd_stop_start",
+    "direct_node_reboot",
+    "sigkill_plus_reboot",
+]
+
+
+def thrash_node_reboot(
+    rados_obj: RadosOrchestrator,
+    ceph_cluster,
+    osd_list: List[int],
+    iterations: int,
+    stop_flag: Dict,
+    reboot_wait: int = 120,
+    installer_hostname: Optional[str] = None,
+) -> int:
+    """Thrash OSD host nodes using randomly-selected reboot scenarios.
+
+    Each iteration picks one of six chaos scenarios at random (see
+    ``NODE_REBOOT_SCENARIOS``) and executes it against one or more OSD
+    hosts.  Safety checks prevent rebooting the installer node, all MON
+    hosts, or repeating the same host consecutively (when alternatives
+    exist).
+
+    Args:
+        rados_obj: RadosOrchestrator object
+        ceph_cluster: Ceph cluster object (provides ``get_nodes``)
+        osd_list: List of OSD IDs eligible for thrashing
+        iterations: Number of thrashing iterations
+        stop_flag: Dict with ``"stop"`` key to signal early termination
+        reboot_wait: Seconds to sleep after issuing reboot before
+            polling OSD status (default 120)
+        installer_hostname: Hostname of the installer/admin node to
+            exclude from reboot targets (default: None)
+
+    Returns:
+        Number of iterations completed
+    """
+    log.info(
+        f"Starting node reboot thrashing "
+        f"(iterations: {iterations}, reboot_wait: {reboot_wait}s, "
+        f"scenarios: {NODE_REBOOT_SCENARIOS}, "
+        f"installer (excluded): {installer_hostname})"
+    )
+    completed = 0
+    last_target: Optional[str] = None
+    mon_hostnames = {n.hostname for n in ceph_cluster.get_nodes(role="mon")}
+    protected = set()
+    if installer_hostname:
+        protected.add(installer_hostname)
+
+    for iteration in range(iterations):
+        if stop_flag.get("stop"):
+            break
+
+        scenario = random.choice(NODE_REBOOT_SCENARIOS)
+        log.info(
+            f"Node reboot iteration {iteration + 1}/{iterations}: "
+            f"scenario='{scenario}'"
+        )
+
+        try:
+            host_map = _build_host_osd_map(rados_obj, osd_list)
+            for p in protected:
+                host_map.pop(p, None)
+            if not host_map:
+                log.warning("No OSD hosts found, skipping iteration")
+                time.sleep(10)
+                continue
+
+            if scenario == "rolling_node_restart":
+                _scenario_rolling_node_restart(
+                    rados_obj, ceph_cluster, host_map,
+                    mon_hostnames, reboot_wait, stop_flag,
+                )
+            elif scenario == "rolling_osd_stop_start":
+                _scenario_rolling_osd_stop_start(
+                    rados_obj, ceph_cluster, host_map, stop_flag,
+                )
+            else:
+                target = _pick_target_host(
+                    host_map, last_target, mon_hostnames,
+                )
+                if not target:
+                    log.warning("No eligible host for scenario, skipping")
+                    time.sleep(5)
+                    continue
+                last_target = target
+
+                host_node = _resolve_host_node(
+                    rados_obj, target, host_map[target],
+                )
+                if not host_node:
+                    time.sleep(5)
+                    continue
+
+                if scenario == "single_host_maintenance":
+                    _scenario_single_host_maintenance(
+                        rados_obj, target, host_map[target],
+                    )
+                elif scenario == "maintenance_plus_reboot":
+                    _scenario_maintenance_plus_reboot(
+                        rados_obj, host_node, target,
+                        host_map[target], reboot_wait,
+                    )
+                elif scenario == "direct_node_reboot":
+                    _scenario_direct_node_reboot(
+                        rados_obj, host_node, target,
+                        host_map[target], reboot_wait,
+                    )
+                elif scenario == "sigkill_plus_reboot":
+                    _scenario_sigkill_plus_reboot(
+                        rados_obj, host_node, target,
+                        host_map[target], reboot_wait,
+                    )
+
+            completed += 1
+
+        except Exception as e:
+            log.warning(f"Scenario '{scenario}' failed: {e}")
+
+        if not stop_flag.get("stop"):
+            time.sleep(random.uniform(10, 20))
+
+    log.info(f"Node reboot thrashing completed: {completed} iterations")
+    return completed
+
+
+# -- Helper functions for thrash_node_reboot --------------------------------
+
+
+def _build_host_osd_map(
+    rados_obj: RadosOrchestrator,
+    osd_list: List[int],
+) -> Dict[str, List[int]]:
+    """Parse ``ceph osd tree`` and return {hostname: [osd_ids]} for hosts
+    whose OSDs overlap with *osd_list*."""
+    osd_tree = rados_obj.run_ceph_command(cmd="ceph osd tree")
+    if not osd_tree:
+        return {}
+    osd_set = set(osd_list)
+    host_to_osds: Dict[str, List[int]] = {}
+    for node in osd_tree.get("nodes", []):
+        if node.get("type") != "host":
+            continue
+        matching = [c for c in node.get("children", []) if c in osd_set]
+        if matching:
+            host_to_osds[node["name"]] = matching
+    return host_to_osds
+
+
+def _pick_target_host(
+    host_map: Dict[str, List[int]],
+    last_target: Optional[str],
+    mon_hostnames: set,
+) -> Optional[str]:
+    """Choose a random OSD host, avoiding *last_target* when possible and
+    refusing to take down the last MON."""
+    eligible = list(host_map.keys())
+    if last_target and last_target in eligible and len(eligible) > 1:
+        eligible.remove(last_target)
+
+    random.shuffle(eligible)
+    for candidate in eligible:
+        if candidate in mon_hostnames:
+            other_mons = mon_hostnames - {candidate}
+            if not other_mons:
+                continue
+        return candidate
+    return None
+
+
+def _resolve_host_node(
+    rados_obj: RadosOrchestrator,
+    hostname: str,
+    osd_ids: List[int],
+):
+    """Return the CephNode object for *hostname* via fetch_host_node."""
+    try:
+        return rados_obj.fetch_host_node(
+            daemon_type="osd", daemon_id=str(osd_ids[0]),
+        )
+    except Exception as e:
+        log.warning(f"Could not resolve CephNode for {hostname}: {e}")
+        return None
+
+
+def _wait_osds_up(
+    rados_obj: RadosOrchestrator,
+    affected_osds: List[int],
+    hostname: str,
+    timeout: int = 600,
+) -> bool:
+    """Poll ``ceph osd tree`` until all *affected_osds* are ``up``."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            tree = rados_obj.run_ceph_command(
+                cmd="ceph osd tree", client_exec=True,
+            )
+            if tree:
+                up_ids = {
+                    n["id"]
+                    for n in tree.get("nodes", [])
+                    if n.get("type") == "osd" and n.get("status") == "up"
+                }
+                missing = [o for o in affected_osds if o not in up_ids]
+                if not missing:
+                    log.info(
+                        f"All OSDs on {hostname} back up: {affected_osds}"
+                    )
+                    return True
+                log.info(
+                    f"Waiting for OSDs {missing} on {hostname} "
+                    f"({int(time.time() - start)}s elapsed)"
+                )
+        except Exception as e:
+            log.warning(f"OSD tree poll error: {e}")
+        time.sleep(15)
+
+    log.warning(
+        f"Timed out ({timeout}s) waiting for OSDs on {hostname}"
+    )
+    return False
+
+
+def _reboot_host_and_wait(
+    rados_obj: RadosOrchestrator,
+    host_node,
+    hostname: str,
+    affected_osds: List[int],
+    reboot_wait: int,
+    ssh_retries: int = 12,
+    ssh_retry_interval: int = 15,
+) -> bool:
+    """Issue ``reboot`` on *host_node*, sleep, then retry SSH reconnection
+    until successful before polling OSD status.
+
+    After the initial ``reboot_wait`` sleep, SSH reconnection is retried
+    up to ``ssh_retries`` times (default 12 x 15s = 3 min) to handle
+    slow sshd startup after boot.
+    """
+    log.info(f"Issuing reboot on {hostname}")
+    try:
+        host_node.exec_command(
+            sudo=True, cmd="reboot", check_ec=False,
+        )
+    except Exception:
+        log.info(f"SSH dropped after reboot on {hostname} (expected)")
+
+    log.info(f"Waiting {reboot_wait}s for {hostname} to reboot")
+    time.sleep(reboot_wait)
+
+    reconnected = False
+    for attempt in range(1, ssh_retries + 1):
+        try:
+            host_node.reconnect()
+            log.info(
+                f"SSH reconnected to {hostname} (attempt {attempt})"
+            )
+            reconnected = True
+            break
+        except Exception as e:
+            log.warning(
+                f"SSH reconnect to {hostname} failed "
+                f"(attempt {attempt}/{ssh_retries}): {e}"
+            )
+            if attempt < ssh_retries:
+                time.sleep(ssh_retry_interval)
+
+    if not reconnected:
+        log.error(
+            f"SSH reconnect to {hostname} failed after "
+            f"{ssh_retries} attempts -- node may need manual recovery"
+        )
+
+    return _wait_osds_up(rados_obj, affected_osds, hostname)
+
+
+# -- Scenario implementations -----------------------------------------------
+
+
+def _scenario_single_host_maintenance(
+    rados_obj: RadosOrchestrator,
+    hostname: str,
+    affected_osds: List[int],
+) -> None:
+    """Enter orch maintenance on one host, verify OSDs go down, exit
+    maintenance, verify OSDs come back.
+
+    Mirrors ODF *test_node_maintenance* (single-node drain)."""
+    log.info(f"[single_host_maintenance] Entering maintenance: {hostname}")
+
+    entered = rados_obj.host_maintenance_enter(hostname, retry=5)
+    if not entered:
+        log.warning(f"Failed to enter maintenance on {hostname}")
+        return
+
+    time.sleep(30)
+
+    try:
+        rados_obj.log_cluster_health()
+    except Exception:
+        pass
+
+    log.info(f"[single_host_maintenance] Exiting maintenance: {hostname}")
+    exited = rados_obj.host_maintenance_exit(hostname, retry=5)
+    if not exited:
+        log.warning(
+            f"Failed to exit maintenance on {hostname}, "
+            f"forcing exit..."
+        )
+        try:
+            rados_obj.client.exec_command(
+                cmd=f"ceph orch host maintenance exit {hostname}",
+                sudo=True,
+            )
+        except Exception:
+            pass
+
+    _wait_osds_up(rados_obj, affected_osds, hostname, timeout=600)
+
+
+def _scenario_maintenance_plus_reboot(
+    rados_obj: RadosOrchestrator,
+    host_node,
+    hostname: str,
+    affected_osds: List[int],
+    reboot_wait: int,
+) -> None:
+    """Enter maintenance, reboot the drained host, wait for it to come
+    back, then exit maintenance.
+
+    Mirrors ODF *test_node_maintenance_restart_activate*."""
+    log.info(
+        f"[maintenance_plus_reboot] Entering maintenance: {hostname}"
+    )
+    entered = rados_obj.host_maintenance_enter(hostname, retry=5)
+    if not entered:
+        log.warning(f"Failed to enter maintenance on {hostname}")
+        return
+
+    log.info(f"[maintenance_plus_reboot] Rebooting {hostname} while drained")
+    try:
+        host_node.exec_command(
+            sudo=True, cmd="reboot", check_ec=False,
+        )
+    except Exception:
+        log.info(f"SSH dropped after reboot on {hostname} (expected)")
+
+    time.sleep(reboot_wait)
+
+    for attempt in range(1, 13):
+        try:
+            host_node.reconnect()
+            log.info(
+                f"SSH reconnected to {hostname} (attempt {attempt})"
+            )
+            break
+        except Exception as e:
+            log.warning(
+                f"SSH reconnect to {hostname} failed "
+                f"(attempt {attempt}/12): {e}"
+            )
+            if attempt < 12:
+                time.sleep(15)
+
+    end = time.time() + 600
+    while time.time() < end:
+        if not rados_obj.check_host_status(hostname, "offline"):
+            log.info(f"{hostname} back online in orch (maintenance mode)")
+            break
+        time.sleep(15)
+    else:
+        log.warning(f"{hostname} still offline after 600s")
+
+    log.info(
+        f"[maintenance_plus_reboot] Exiting maintenance: {hostname}"
+    )
+    exited = rados_obj.host_maintenance_exit(hostname, retry=5)
+    if not exited:
+        try:
+            rados_obj.client.exec_command(
+                cmd=f"ceph orch host maintenance exit {hostname}",
+                sudo=True,
+            )
+        except Exception:
+            pass
+
+    _wait_osds_up(rados_obj, affected_osds, hostname, timeout=600)
+
+
+def _scenario_rolling_node_restart(
+    rados_obj: RadosOrchestrator,
+    ceph_cluster,
+    host_map: Dict[str, List[int]],
+    mon_hostnames: set,
+    reboot_wait: int,
+    stop_flag: Dict,
+) -> None:
+    """Reboot every OSD host one at a time, waiting for recovery between
+    each.
+
+    Mirrors ODF *test_rolling_nodes_restart*."""
+    hosts = list(host_map.keys())
+    random.shuffle(hosts)
+    log.info(
+        f"[rolling_node_restart] Rebooting {len(hosts)} hosts one by one"
+    )
+
+    for hostname in hosts:
+        if stop_flag.get("stop"):
+            break
+
+        if hostname in mon_hostnames:
+            other_mons = mon_hostnames - {hostname}
+            if not other_mons:
+                log.warning(
+                    f"[rolling_node_restart] Skipping {hostname}: "
+                    f"last MON"
+                )
+                continue
+
+        host_node = _resolve_host_node(
+            rados_obj, hostname, host_map[hostname],
+        )
+        if not host_node:
+            continue
+
+        _reboot_host_and_wait(
+            rados_obj, host_node, hostname,
+            host_map[hostname], reboot_wait,
+        )
+
+        if not stop_flag.get("stop"):
+            time.sleep(random.uniform(15, 30))
+
+
+def _scenario_rolling_osd_stop_start(
+    rados_obj: RadosOrchestrator,
+    ceph_cluster,
+    host_map: Dict[str, List[int]],
+    stop_flag: Dict,
+) -> None:
+    """Stop all OSD daemons on one host at a time via orchestrator, sleep
+    60-120 s, then restart them.
+
+    Mirrors ODF *rolling shutdown and recovery* without full power-off."""
+    hosts = list(host_map.keys())
+    random.shuffle(hosts)
+    log.info(
+        f"[rolling_osd_stop_start] Cycling through {len(hosts)} hosts"
+    )
+
+    for hostname in hosts:
+        if stop_flag.get("stop"):
+            break
+
+        osds = host_map[hostname]
+        log.info(
+            f"[rolling_osd_stop_start] Stopping OSDs {osds} on {hostname}"
+        )
+
+        for osd_id in osds:
+            try:
+                rados_obj.client.exec_command(
+                    cmd=f"ceph orch daemon stop osd.{osd_id}", sudo=True,
+                )
+            except Exception as e:
+                log.warning(f"Failed to stop OSD.{osd_id}: {e}")
+
+        down_time = random.uniform(60, 120)
+        log.info(
+            f"[rolling_osd_stop_start] OSDs down on {hostname} for "
+            f"{down_time:.0f}s"
+        )
+        time.sleep(down_time)
+
+        log.info(
+            f"[rolling_osd_stop_start] Starting OSDs {osds} on {hostname}"
+        )
+        for osd_id in osds:
+            try:
+                rados_obj.client.exec_command(
+                    cmd=f"ceph orch daemon start osd.{osd_id}", sudo=True,
+                )
+            except Exception as e:
+                log.warning(f"Failed to start OSD.{osd_id}: {e}")
+
+        _wait_osds_up(rados_obj, osds, hostname, timeout=600)
+
+        if not stop_flag.get("stop"):
+            time.sleep(random.uniform(15, 30))
+
+
+def _scenario_direct_node_reboot(
+    rados_obj: RadosOrchestrator,
+    host_node,
+    hostname: str,
+    affected_osds: List[int],
+    reboot_wait: int,
+) -> None:
+    """Reboot a single OSD host without entering maintenance mode and
+    verify all its OSDs come back.
+
+    Mirrors ODF *test_rolling_nodes_restart* (single iteration)."""
+    log.info(f"[direct_node_reboot] Rebooting {hostname}")
+    _reboot_host_and_wait(
+        rados_obj, host_node, hostname, affected_osds, reboot_wait,
+    )
+
+
+def _scenario_sigkill_plus_reboot(
+    rados_obj: RadosOrchestrator,
+    host_node,
+    hostname: str,
+    affected_osds: List[int],
+    reboot_wait: int,
+) -> None:
+    """SIGKILL a random OSD on the host, then immediately reboot the
+    host, stressing crash-recovery + boot-recovery in sequence.
+
+    Exercises the BlueStore journal replay path after an unclean shutdown
+    followed by a full node restart."""
+    target_osd = random.choice(affected_osds)
+    log.info(
+        f"[sigkill_plus_reboot] Killing OSD.{target_osd} on {hostname} "
+        f"then rebooting"
+    )
+
+    try:
+        pid_out, _ = host_node.exec_command(
+            sudo=True,
+            cmd=f"pgrep -f 'ceph-osd.*--id {target_osd}\\b'",
+        )
+        pid = pid_out.strip()
+        if pid:
+            host_node.exec_command(sudo=True, cmd=f"kill -9 {pid}")
+            log.info(f"SIGKILL sent to OSD.{target_osd} (PID {pid})")
+            time.sleep(3)
+    except Exception as e:
+        log.warning(f"SIGKILL of OSD.{target_osd} failed: {e}")
+
+    _reboot_host_and_wait(
+        rados_obj, host_node, hostname, affected_osds, reboot_wait,
+    )
+
+
+# ---------------------------------------------------------------------------
+#  Network Fault Thrashing
+# ---------------------------------------------------------------------------
+
+NETWORK_FAULT_RULES = {
+    "loss": "loss 25%",
+    "delay": "delay 100ms 20ms",
+    "duplicate": "duplicate 5%",
+    "corrupt": "corrupt 1%",
+}
+
+
+def thrash_network_faults(
+    rados_obj: RadosOrchestrator,
+    ceph_cluster,
+    iterations: int,
+    duration: int,
+    stop_flag: Dict,
+    fault_types: Optional[List[str]] = None,
+    fault_duration: int = 30,
+    target_scope: str = "random",
+) -> int:
+    """Inject tc netem network faults on cluster nodes during concurrent I/O.
+
+    Per iteration:
+    1. Select node(s) based on ``target_scope``
+    2. Pick a random fault type from ``fault_types``
+    3. Apply fault via ``tc qdisc add dev <iface> root netem <rule>``
+    4. Hold for ``fault_duration`` seconds (interruptible via stop_flag)
+    5. Remove fault via ``tc qdisc del dev <iface> root netem``
+    6. Verify cleanup: ``tc qdisc show`` has no netem remaining
+    7. Log iteration results
+
+    Args:
+        rados_obj: RadosOrchestrator object
+        ceph_cluster: Ceph cluster object for node access
+        iterations: Number of fault injection cycles (default: 4)
+        duration: Total wall-clock budget in seconds
+        stop_flag: Dict with ``"stop"`` key to signal early termination
+        fault_types: Subset of ``NETWORK_FAULT_RULES`` keys to use
+            (default: all four types)
+        fault_duration: Seconds to hold each fault before removal (default: 30)
+        target_scope: Node selection strategy:
+            ``"random"`` -- one random node per round
+            ``"all"`` -- every cluster node simultaneously
+            ``"osd"`` -- only nodes with the ``osd`` role
+            ``"mon"`` -- only nodes with the ``mon`` role
+
+    Returns:
+        Number of iterations completed
+    """
+    if fault_types is None:
+        fault_types = list(NETWORK_FAULT_RULES.keys())
+
+    valid_faults = [ft for ft in fault_types if ft in NETWORK_FAULT_RULES]
+    if not valid_faults:
+        log.error(
+            f"No valid fault types in {fault_types}. "
+            f"Valid types: {list(NETWORK_FAULT_RULES.keys())}"
+        )
+        return 0
+
+    if target_scope in ("osd", "mon"):
+        candidate_nodes = ceph_cluster.get_nodes(role=target_scope)
+    else:
+        candidate_nodes = ceph_cluster.get_nodes()
+
+    candidate_nodes = [n for n in candidate_nodes if n.hostname]
+    if not candidate_nodes:
+        log.error(f"No candidate nodes found for scope '{target_scope}'")
+        return 0
+
+    log.info(
+        f"Starting network fault thrashing "
+        f"(iterations: {iterations}, fault_duration: {fault_duration}s, "
+        f"scope: {target_scope}, faults: {valid_faults}, "
+        f"candidates: {[n.hostname for n in candidate_nodes]})"
+    )
+
+    completed = 0
+    end_time = time.time() + duration
+    faulted_hosts = set()
+
+    try:
+        for iteration in range(iterations):
+            if stop_flag.get("stop") or time.time() >= end_time:
+                break
+
+            fault_type = random.choice(valid_faults)
+            fault_rule = NETWORK_FAULT_RULES[fault_type]
+
+            if target_scope == "all":
+                target_nodes = candidate_nodes
+            else:
+                target_nodes = [random.choice(candidate_nodes)]
+
+            target_hostnames = [n.hostname for n in target_nodes]
+            log.info(
+                f"Iteration {iteration + 1}/{iterations}: "
+                f"Injecting '{fault_type}' ({fault_rule}) on {target_hostnames}"
+            )
+
+            applied_hosts = []
+            for node in target_nodes:
+                if stop_flag.get("stop"):
+                    break
+                if rados_obj.apply_network_fault_on_host(
+                    hostname=node.hostname, fault_rule=fault_rule, set_fault=True
+                ):
+                    applied_hosts.append(node.hostname)
+                    faulted_hosts.add(node.hostname)
+                else:
+                    log.warning(
+                        f"Failed to apply {fault_type} on {node.hostname}"
+                    )
+
+            if not applied_hosts:
+                log.warning(f"Iteration {iteration + 1}: no faults applied, skipping")
+                continue
+
+            remaining = fault_duration
+            while remaining > 0 and not stop_flag.get("stop"):
+                step = min(2, remaining)
+                time.sleep(step)
+                remaining -= step
+
+            for hostname in applied_hosts:
+                if not rados_obj.apply_network_fault_on_host(
+                    hostname=hostname, set_fault=False
+                ):
+                    log.error(f"Failed to remove fault from {hostname}")
+
+            cleanup_ok = True
+            for hostname in applied_hosts:
+                if not rados_obj.verify_no_netem_on_host(hostname):
+                    log.error(f"netem still present on {hostname} after removal")
+                    cleanup_ok = False
+
+            if cleanup_ok:
+                log.info(
+                    f"Iteration {iteration + 1}: "
+                    f"'{fault_type}' injected and cleaned on {applied_hosts}"
+                )
+            else:
+                log.warning(
+                    f"Iteration {iteration + 1}: "
+                    f"cleanup incomplete on some hosts"
+                )
+
+            completed += 1
+
+            if not stop_flag.get("stop"):
+                time.sleep(random.uniform(2, 5))
+
+    finally:
+        log.info(
+            f"Final cleanup: removing netem from all faulted hosts: "
+            f"{list(faulted_hosts)}"
+        )
+        for hostname in faulted_hosts:
+            try:
+                rados_obj.apply_network_fault_on_host(
+                    hostname=hostname, set_fault=False
+                )
+            except Exception as e:
+                log.error(f"Cleanup failed for {hostname}: {e}")
+            if not rados_obj.verify_no_netem_on_host(hostname):
+                log.error(
+                    f"CRITICAL: netem still on {hostname} after final cleanup"
+                )
+
+    log.info(f"Network fault thrashing completed: {completed} iterations")
+    return completed
+
+
+# ---------------------------------------------------------------------------
+#  MON / MGR SIGKILL Helpers
+# ---------------------------------------------------------------------------
+
+
+def _thrash_mon_sigkill(rados_obj: RadosOrchestrator, mon_workflow_obj) -> bool:
+    """
+    Kill a random MON daemon with SIGKILL (kill -9) to simulate an abrupt crash.
+
+    Unlike graceful stop/start, SIGKILL bypasses all shutdown handlers, forcing
+    the daemon to terminate immediately. The orchestrator should auto-restart
+    the daemon. This tests recovery from unclean daemon exits.
+
+    Maintains quorum safety by only killing one MON at a time and verifying
+    there are enough MONs to sustain quorum before proceeding.
+    """
+    try:
+        quorum_hosts = mon_workflow_obj.get_mon_quorum_hosts()
+        if len(quorum_hosts) < 3:
+            log.warning(
+                f"Need at least 3 MONs in quorum for sigkill thrash, "
+                f"have {len(quorum_hosts)}"
+            )
+            return False
+
+        target_mon = random.choice(quorum_hosts)
+        host = rados_obj.fetch_host_node(daemon_type="mon", daemon_id=target_mon)
+        if not host:
+            log.warning(f"Could not resolve host for MON {target_mon}")
+            return False
+
+        log.info(
+            f"Sending SIGKILL to MON {target_mon} on host {host.hostname}"
+        )
+
+        host.exec_command(
+            sudo=True,
+            cmd=(
+                "pidof ceph-mon | xargs -r kill -9"
+            ),
+        )
+        time.sleep(15)
+
+        time.sleep(15)
+        quorum_after = mon_workflow_obj.get_mon_quorum_hosts()
+
+        if target_mon in quorum_after:
+            log.info(
+                f"MON {target_mon} recovered and rejoined quorum after SIGKILL"
+            )
+            return True
+
+        log.info(
+            f"MON {target_mon} not yet in quorum, waiting additional 30s..."
+        )
+        time.sleep(30)
+        quorum_after = mon_workflow_obj.get_mon_quorum_hosts()
+
+        if target_mon in quorum_after:
+            log.info(
+                f"MON {target_mon} rejoined quorum after extended wait"
+            )
+            return True
+
+        log.warning(
+            f"MON {target_mon} did not rejoin quorum after SIGKILL. "
+            f"Current quorum: {quorum_after}"
+        )
+        return False
+
+    except Exception as e:
+        log.error(f"MON sigkill thrash failed: {e}")
+        return False
+
+
+def _thrash_mgr_sigkill(
+    rados_obj: RadosOrchestrator, mgr_workflow_obj: MgrWorkflows
+) -> bool:
+    """
+    Kill a random MGR daemon with SIGKILL (kill -9) to simulate an abrupt crash.
+
+    Selects a random MGR (active or standby), resolves its host, and sends
+    SIGKILL to the ceph-mgr process on that host. The orchestrator should
+    auto-restart the daemon. Verifies an active MGR is available post-kill.
+    """
+    try:
+        mgr_list = mgr_workflow_obj.get_mgr_daemon_list()
+        if len(mgr_list) < 2:
+            log.warning("Need at least 2 MGRs for sigkill thrash")
+            return False
+
+        target_mgr = random.choice(mgr_list)
+        active_mgr = mgr_workflow_obj.get_active_mgr()
+        mgr_type = "active" if target_mgr == active_mgr else "standby"
+
+        host = rados_obj.fetch_host_node(daemon_type="mgr", daemon_id=target_mgr)
+        if not host:
+            log.warning(f"Could not resolve host for MGR {target_mgr}")
+            return False
+
+        log.info(
+            f"Sending SIGKILL to {mgr_type} MGR {target_mgr} "
+            f"on host {host.hostname}"
+        )
+
+        host.exec_command(
+            sudo=True,
+            cmd="pidof ceph-mgr | xargs -r kill -9",
+        )
+        time.sleep(15)
+
+        time.sleep(15)
+
+        new_active = mgr_workflow_obj.get_active_mgr()
+        if new_active:
+            log.info(
+                f"MGR cluster healthy after SIGKILL of {target_mgr}. "
+                f"Active MGR: {new_active}"
+            )
+            return True
+
+        log.info("No active MGR yet, waiting additional 30s for recovery...")
+        time.sleep(30)
+        new_active = mgr_workflow_obj.get_active_mgr()
+        if new_active:
+            log.info(f"MGR recovered after extended wait. Active: {new_active}")
+            return True
+
+        log.warning(f"No active MGR after SIGKILL of {target_mgr}")
+        return False
+
+    except Exception as e:
+        log.error(f"MGR sigkill thrash failed: {e}")
+        return False
