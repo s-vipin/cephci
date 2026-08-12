@@ -50,6 +50,12 @@ Daemon Failover Workflows:
     rolling restart, random daemon fail.  Validates module continuity.
   - **MDS thrashing** (``enable_mds_thrashing``): Active MDS failover,
     rolling restart, random fail.  CephFS I/O must survive rank transitions.
+  - **Node reboot thrashing** (``enable_node_reboot_thrashing``): Full
+    host-level chaos using six randomly-selected scenarios per iteration:
+    (1) single host orch maintenance enter/exit, (2) maintenance + reboot,
+    (3) rolling restart of all OSD hosts, (4) rolling OSD stop/start via
+    orch, (5) direct node reboot without maintenance mode,
+    (6) SIGKILL + reboot combo.  Verifies OSD recovery after each scenario.
 
 I/O Workloads:
   - **CephFS FIO** (``enable_fio_cephfs``): FIO on kernel-mounted CephFS
@@ -143,7 +149,8 @@ TEST WORKFLOW:
     │   ├── nfs protocol state threads: client/export/admin churn [if enabled]
     │   ├── thrash_smb: SMB daemon chaos loops [if enabled]
     │   ├── thrash_smb_client_io: SMB client operations under chaos [if enabled]
-    │   └── thrash_cephfs_subvolumes: Create/ops/delete subvolume groups+subvols [if enabled]
+    │   ├── thrash_cephfs_subvolumes: Create/ops/delete subvolume groups+subvols [if enabled]
+    │   └── thrash_node_reboot: Host-level chaos (6 scenarios at random) [if enabled]
     │
     ├── VALIDATION PHASE
     │   ├── Wait for cluster stabilization (active+clean PGs)
@@ -226,6 +233,9 @@ CONFIGURATION OPTIONS:
 - smb_num_shares: Number of SMB shares per cluster for setup (default: 4)
 - smb_user_name / smb_user_password: SMB credentials for client IO checks
 - enable_smb_rados_config_check: Validate SMB RADOS metadata post-thrash (default: False)
+- enable_node_reboot_thrashing: Enable node reboot thrashing - full host-level chaos (default: False)
+- node_reboot_wait: Seconds to wait after issuing reboot before polling (default: 120)
+- node_reboot_iterations: Override iteration count (default: iterations // 4)
 - enable_esb_verification: Enable BlueStore ESB Bug #70390 verification (default: False).
   Sets bluestore_elastic_shared_blobs=true, bluestore_write_v2=false, bluestore_onode_segment_size=0,
   bluestore_debug_extent_map_encode_check=true, debug_bluestore=5/5.
@@ -270,6 +280,7 @@ from tests.rados.thrash_helpers import (
     thrash_nfs_client_churn,
     thrash_nfs_daemon_failover,
     thrash_nfs_export_churn,
+    thrash_node_reboot,
     thrash_smb,
     thrash_smb_client_io,
     verify_data_integrity,
@@ -435,6 +446,11 @@ def run(ceph_cluster, **kw):
         smb_user_password (str): SMB password for endpoint/client IO checks
             (default: smbpassword)
         enable_smb_rados_config_check (bool): RADOS config integrity for SMB (default: False)
+        enable_node_reboot_thrashing (bool): Enable node reboot thrashing with
+            six randomly-selected scenarios (default: False)
+        node_reboot_wait (int): Seconds after reboot before polling OSDs (default: 120)
+        node_reboot_iterations (int|None): Override iteration count; if None,
+            auto-computed as ``iterations // 4`` (default: None)
         error_injection (dict): Suite-driven error injection config (default: None).
             Supports profile, profile_overrides, configs, ec_write_errors,
             ec_read_errors, admin_socket. See CephErrorInjector for schema.
@@ -528,6 +544,12 @@ def run(ceph_cluster, **kw):
     enable_smb_thrashing = config.get("enable_smb_thrashing", False)
     smb_cluster_ids = config.get("smb_cluster_ids", [])
     enable_smb_rados_config_check = config.get("enable_smb_rados_config_check", False)
+
+    # Node reboot thrashing parameters
+    enable_node_reboot_thrashing = config.get("enable_node_reboot_thrashing", False)
+    node_reboot_wait = config.get("node_reboot_wait", 120)
+    node_reboot_iterations = config.get("node_reboot_iterations", None)
+
     enable_fast_ec_config_params = config.get("enable_fast_ec_config_params", True)
     enable_esb_verification = config.get("enable_esb_verification", False)
     disabled_ec_optimizations = False
@@ -628,6 +650,13 @@ def run(ceph_cluster, **kw):
         f"  SMB thrashing: {enable_smb_thrashing}\n"
         + (f"  SMB cluster IDs: {smb_cluster_ids}\n" if enable_smb_thrashing else "")
         + f"  SMB RADOS config check: {enable_smb_rados_config_check}\n"
+        f"  Node reboot thrashing: {enable_node_reboot_thrashing}\n"
+        + (
+            f"  Node reboot wait: {node_reboot_wait}s\n"
+            f"  Node reboot iterations: {node_reboot_iterations or 'auto (iterations // 4)'}\n"
+            if enable_node_reboot_thrashing
+            else ""
+        )
     )
     _ei_config = config.get("error_injection", {})
     if _ei_config:
@@ -1410,6 +1439,8 @@ def run(ceph_cluster, **kw):
         max_workers += (
             1 if (enable_smb_thrashing and smb_config) else 0
         )  # smb_client_io
+        # Node reboot thrashing thread
+        max_workers += 1 if enable_node_reboot_thrashing else 0
         log.debug("ThreadPoolExecutor max_workers: %s", max_workers)
 
         with cf.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1795,6 +1826,27 @@ def run(ceph_cluster, **kw):
             elif enable_smb_thrashing:
                 log.warning("SMB thrashing enabled but no SMB config available")
 
+            # Node reboot thrashing (full-node reboot with recovery verification)
+            if enable_node_reboot_thrashing:
+                _nr_iters = node_reboot_iterations or max(iterations // 4, 2)
+                log.info(
+                    "Node reboot thrashing enabled (%d iterations, %ds wait)",
+                    _nr_iters,
+                    node_reboot_wait,
+                )
+                futures.append(
+                    executor.submit(
+                        thrash_node_reboot,
+                        rados_obj=rados_obj,
+                        ceph_cluster=ceph_cluster,
+                        osd_list=osd_list,
+                        iterations=_nr_iters,
+                        stop_flag=stop_flag,
+                        reboot_wait=node_reboot_wait,
+                        installer_hostname=cephadm.installer.node.hostname,
+                    )
+                )
+
             log.info(f"Thrashing operations in progress (max duration: {duration}s)...")
             try:
                 for future in cf.as_completed(futures, timeout=duration):
@@ -1859,6 +1911,7 @@ def run(ceph_cluster, **kw):
                 "nfs_admin_ops": None,
                 "smb_daemon_thrashing": None,
                 "smb_client_io": None,
+                "node_reboot_thrashing": None,
             }
             # Map futures to workflow names based on their index
             workflow_order = []
@@ -1914,6 +1967,8 @@ def run(ceph_cluster, **kw):
             if enable_smb_thrashing and smb_config:
                 workflow_order.append("smb_daemon_thrashing")
                 workflow_order.append("smb_client_io")
+            if enable_node_reboot_thrashing:
+                workflow_order.append("node_reboot_thrashing")
 
             for idx, future in enumerate(futures):
                 workflow_name = (
