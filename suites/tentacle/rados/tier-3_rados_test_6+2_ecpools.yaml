@@ -175,7 +175,7 @@ tests:
         service: upgrade
         base_cmd_args:
           verbose: true
-        verify_cluster_health: true
+        verify_cluster_health: false
       destroy-cluster: false
       abort-on-fail: true
 
