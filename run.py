@@ -705,7 +705,10 @@ def run(args):
     docker_image = args.get("--docker-image")
     docker_tag = args.get("--docker-tag")
 
-    if not check_build_overrides(base_url, docker_registry, docker_image, docker_tag):
+    if (
+        not check_build_overrides(base_url, docker_registry, docker_image, docker_tag)
+        or crimson
+    ):
         # In case the overrides are not valid, we are switching them to other inputs.
         base_url = ctm.repository
         docker_registry = ctm.ceph_image_dtr
