@@ -481,6 +481,9 @@ class RadosOrchestrator:
             )
             if max_objs and verify_stats:
                 exp_objs = org_objs + max_objs
+                # exclude header object as it would be only extra for an empty pool
+                if org_objs > 0:
+                    exp_objs = exp_objs - 1
                 assert self.verify_pool_stats(pool_name=pool_name, exp_objs=exp_objs)
             else:
                 time.sleep(15)
