@@ -649,6 +649,9 @@ class RadosOrchestrator:
                 log.error(f"failed to initialize the RBD pool. Error: {err}")
                 return False
 
+        if kwargs.get("mon_max_pg_per_osd", True):
+            self.node.shell(["ceph config set osd mon_max_pg_per_osd 350"])
+
         time.sleep(5)
         log.info(f"Created pool {pool_name} successfully")
         return True
