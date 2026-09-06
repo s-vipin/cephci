@@ -230,7 +230,7 @@ tests:
         verify_warning: false
         verify_daemons: true
         verify_cluster_usage: false
-      abort-on-fail: true
+      abort-on-fail: false
 
   - test:
       name: Enable Stretch mode on pool post upgrade

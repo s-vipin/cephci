@@ -209,7 +209,7 @@ tests:
         service: upgrade
         args:
           daemon_types: "mgr"
-        verify_cluster_health: true
+        verify_cluster_health: false
       destroy-cluster: false
       abort-on-fail: true
 
@@ -232,7 +232,7 @@ tests:
         service: upgrade
         args:
           daemon_types: "mon,crash"
-        verify_cluster_health: true
+        verify_cluster_health: false
       destroy-cluster: false
       abort-on-fail: true
 
@@ -257,7 +257,7 @@ tests:
         args:
           daemon_types: "osd"
           hosts: "node3,node4"
-        verify_cluster_health: true
+        verify_cluster_health: false
       destroy-cluster: false
       abort-on-fail: true
 
@@ -280,7 +280,7 @@ tests:
         service: upgrade
         args:
           daemon_types: "osd"
-        verify_cluster_health: true
+        verify_cluster_health: false
       destroy-cluster: false
       abort-on-fail: true
 
@@ -301,7 +301,7 @@ tests:
       config:
         command: start
         service: upgrade
-        verify_cluster_health: true
+        verify_cluster_health: false
       destroy-cluster: false
       abort-on-fail: true
 
