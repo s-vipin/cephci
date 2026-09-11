@@ -39,7 +39,10 @@ def run(ceph_cluster, **kw):
             [f"ceph orch daemon add osd {osd_hostname}:{osd_device}"]
         )
         log.info(out)
-        assert "Created no osd(s) on host" in out and "already created" in out
+        assert (
+            f"Error: Device {osd_device} is present but unavailable for OSD creation. Reason: Has a FileSystem, Insufficient space (<10 extents) on vgs, LVM detected"
+            in out
+        )
         log.info(
             "Verification complete, addition of new OSD on existing OSD disk, failed as expected"
         )
