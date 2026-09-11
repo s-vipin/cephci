@@ -91,11 +91,7 @@ tests:
       config:
         command: add
         id: client.1                      # client Id (<type>.<Id>)
-        nodes:
-          - node15:
-              release: 7
-          - node7:
-              release: 7
+        nodes: node7
         install_packages:
           - ceph-common
         copy_admin_keyring: true          # Copy admin keyring to node
@@ -114,9 +110,7 @@ tests:
       config:
         command: add
         id: client.2                     # client Id (<type>.<Id>)
-        nodes:
-          - node16:
-              release: 8
+        nodes: node15
         install_packages:
           - ceph-common
         copy_admin_keyring: true          # Copy admin keyring to node
@@ -128,13 +122,32 @@ tests:
 
   - test:
       name: Configure client 3
+      desc: Configures client.3 admin node on cluster
+      module: test_client.py
+      polarion-id:
+      abort-on-fail: true
+      config:
+        command: add
+        id: client.3                     # client Id (<type>.<Id>)
+        nodes: node16
+        install_packages:
+          - ceph-common
+        copy_admin_keyring: true          # Copy admin keyring to node
+        caps: # authorize client capabilities
+          mon: "allow *"
+          osd: "allow *"
+          mds: "allow *"
+          mgr: "allow *"
+
+  - test:
+      name: Configure client 4
       desc: Configures client admin node on cluster
       module: test_client.py
       polarion-id:
       abort-on-fail: true
       config:
         command: add
-        id: client.3                      # client Id (<type>.<Id>)
+        id: client.4                      # client Id (<type>.<Id>)
         node: node17                       # client node
         install_packages:
           - ceph-common
