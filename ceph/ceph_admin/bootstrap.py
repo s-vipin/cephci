@@ -38,6 +38,88 @@ __DEFAULT_KEYRING_PATH = "/etc/ceph/ceph.client.admin.keyring"
 __DEFAULT_SSH_PATH = "/etc/ceph/ceph.pub"
 
 
+def _detect_registry_tier(registry: str, build_type: str) -> str:
+    """Return credential tier (cdn/stage/preprod) from registry host, else from build_type."""
+    if not registry:
+        return "cdn" if build_type in ("released", "cdn") else "stage"
+    if "registry.redhat.io" in registry or "cp.icr.io" in registry:
+        return "cdn"
+    if "preprod.icr.io" in registry:
+        return "preprod"
+    if "stage" in registry or "stg" in registry or "quay" in registry:
+        return "stage"
+    return "cdn" if build_type in ("released", "cdn") else "stage"
+
+
+def _credential_tier_keys(tier: str, vendor: str) -> list:
+    """
+    Ordered nested credential keys to try for a detected tier and vendor.
+
+    IBM released registry credentials are stored under ``cp``
+    (see examples/cephci.yaml), while detection still reports ``cdn`` for
+    ``cp.icr.io`` to stay aligned with RH. Try both names.
+    """
+    if tier in ("cdn", "cp"):
+        return ["cp", "cdn"] if vendor == "ibm" else ["cdn", "cp"]
+    return [tier]
+
+
+def resolve_registry_login_args(
+    registry: str,
+    product: str = "redhat",
+    build_type: str = "released",
+) -> Dict:
+    """
+    Resolve registry-login args (url/username/password) for a registry host.
+
+    Registry tier is chosen from the registry hostname when it matches a known
+    RH/IBM host (cdn/cp, stage, preprod); otherwise build_type is used
+    (released/cdn -> cdn, else stage).
+    """
+    _vendor = "ibm" if "ibm" in product else "rh"
+
+    _config = get_cephci_config()
+    _reg = registry if registry else ""
+    _tier = _detect_registry_tier(_reg, build_type)
+    logger.debug(
+        "Registry tier selection: registry=%r tier=%r build_type=%r vendor=%r",
+        _reg,
+        _tier,
+        build_type,
+        _vendor,
+    )
+
+    # Prefer nested credentials.registry.<vendor>.<tier> (IBM uses "cp" for
+    # released/cp.icr.io; RH uses "cdn"). Try vendor-appropriate aliases.
+    registry_creds = _config.get("credentials", {}).get("registry", {}).get(_vendor, {})
+    cdn_cred = None
+    for key in _credential_tier_keys(_tier, _vendor):
+        cdn_cred = registry_creds.get(key)
+        if cdn_cred:
+            break
+
+    if not cdn_cred:
+        # Fall back to the flat top-level key (legacy config layout).
+        # Evaluate defaults lazily so a missing cdn_credentials does not
+        # raise KeyError when ibm/rh_registry_credentials is present.
+        cdn_cred = (
+            _config.get(f"{_vendor}_registry_credentials")
+            or _config.get("cdn_credentials")
+            or {}
+        )
+        if _tier and _reg:
+            logger.warning(
+                "No credentials for registry tier '%s'; using legacy %s_registry_credentials",
+                _tier,
+                _vendor,
+            )
+    return {
+        "registry-url": _reg or cdn_cred.get("registry"),
+        "registry-username": cdn_cred.get("username"),
+        "registry-password": cdn_cred.get("password"),
+    }
+
+
 def construct_registry(
     cls,
     registry: str,
@@ -51,6 +133,12 @@ def construct_registry(
         cls (CephAdmin): class object
         registry (Str): registry hostname (e.g. preprod.icr.io)
         json_file (Bool): registry credentials in JSON file (default:False)
+        product: ceph product - ibm/redhat
+        build_type: CLI build type (released|cdn|stage|nightly etc.)
+
+    Registry tier is chosen from the registry hostname when it matches a known
+    RH/IBM host (cdn/cp, stage, preprod); otherwise build_type is used
+    (released/cdn -> cdn, else stage).
 
     Example::
 
