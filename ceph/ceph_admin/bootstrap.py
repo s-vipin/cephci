@@ -150,13 +150,9 @@ def construct_registry(
     Returns:
         constructed string of registry credentials ( Str )
     """
-    if not registry:
-        raise ValueError(
-            "Registry host is required for construct_registry. Pass "
-            "--custom-config bootstrap-registry=<host> or use an image with a host."
-        )
-    reg_args = resolve_registry_login(registry)
-    logger.debug("Registry login args for host %r", registry)
+    reg_args = resolve_registry_login_args(
+        registry, product=product, build_type=build_type
+    )
     if json_file:
         reg = dict((k.lstrip("registry-"), v) for k, v in reg_args.items())
 
@@ -439,27 +435,20 @@ class BootstrapMixin:
         registry_json = args.pop("registry-json", None)
         use_podman_auth = self.config.get("podman_auth_file")
 
-        if use_podman_auth:
-            logger.info(
-                "podman-auth-file is configured, skipping registry credentials "
-                "(cephadm will use %s)",
-                PODMAN_AUTH_PATH,
-            )
+        # Auto-detect registry from custom_image or container image and add credentials if needed
+        if custom_image and isinstance(custom_image, str):
+            image_registry = custom_image.split("/")[0]
         else:
-            if custom_image and isinstance(custom_image, str):
-                image_ref = custom_image
-            else:
-                image_ref = self.config.get("container_image")
+            image_registry = self.config["container_image"].split("/")[0]
 
-            overrides = self.config.get("overrides") or {}
-            registry_url = resolve_registry_host(
-                overrides=overrides,
-                image=image_ref,
-                key="bootstrap-registry",
-            )
-            logger.info(
-                "Using registry host %r for bootstrap login "
-                "(bootstrap-registry / image host)",
+        registry_url = image_registry
+        logger.info(
+            f"Auto-detected registry {registry_url} from container image, adding credentials"
+        )
+
+        if registry_url or manifest_obj.product == "ibm":
+            cmd += construct_registry(
+                self,
                 registry_url,
             )
 
