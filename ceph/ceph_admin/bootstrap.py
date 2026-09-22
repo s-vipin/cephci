@@ -150,49 +150,9 @@ def construct_registry(
     Returns:
         constructed string of registry credentials ( Str )
     """
-    _vendor = "ibm" if "ibm" in product else "rh"
-
-    _config = get_cephci_config()
-    _reg = registry if registry else ""
-    _tier = _detect_registry_tier(_reg, build_type)
-    logger.debug(
-        "Registry tier selection: registry=%r tier=%r build_type=%r vendor=%r",
-        _reg,
-        _tier,
-        build_type,
-        _vendor,
+    reg_args = resolve_registry_login_args(
+        registry, product=product, build_type=build_type
     )
-
-    # Prefer the nested credentials.registry.<vendor>.<tier> path which
-    # carries separate entries for cdn (cp.icr.io) vs stage (cp.stg.icr.io).
-    cdn_cred = (
-        _config.get("credentials", {}).get("registry", {}).get(_vendor, {}).get(_tier)
-    )
-
-    if not cdn_cred:
-        # Fall back to the flat top-level key (legacy config layout)
-        cdn_cred = _config.get(
-            f"{_vendor}_registry_credentials", _config["cdn_credentials"]
-        )
-        if _tier and _reg:
-            logger.warning(
-                "No credentials for registry tier '%s'; using legacy %s_registry_credentials",
-                _tier,
-                _vendor,
-            )
-    # IBM: authenticate at the image host (preprod.icr.io / cp.stg.icr.io).
-    # RH:  authenticate at the credential registry (usually registry.stage.redhat.io),
-    #      not at the image pull host (quay.io).  Logging into quay.io with stage
-    #      credentials triggers 429 rate-limits on the shared qa@redhat.com account.
-    if _vendor == "ibm" and _reg:
-        registry_url = _reg
-    else:
-        registry_url = cdn_cred.get("registry") or _reg
-    reg_args = {
-        "registry-url": registry_url,
-        "registry-username": cdn_cred.get("username"),
-        "registry-password": cdn_cred.get("password"),
-    }
     if json_file:
         reg = dict((k.lstrip("registry-"), v) for k, v in reg_args.items())
 
@@ -426,27 +386,18 @@ class BootstrapMixin:
         registry_url = args.pop("registry-url", None)
         registry_json = args.pop("registry-json", None)
 
-        # Auto-detect the image host for IBM builds (preprod.icr.io / cp.stg.icr.io).
-        # For RH builds the image may be pulled from quay.io via a lab mirror; the
-        # login target is the stage registry in .cephci.yaml, NOT the pull host.
+        # Auto-detect registry from custom_image or container image and add credentials if needed
         if custom_image and isinstance(custom_image, str):
             image_registry = custom_image.split("/")[0]
         else:
             image_registry = self.config["container_image"].split("/")[0]
 
-        if manifest_obj.product == "ibm":
-            registry_url = image_registry
-            logger.info(f"IBM build: using image host {registry_url!r} as registry-url")
-        else:
-            # Pass empty string so construct_registry() falls back to
-            # cdn_cred.get("registry") — i.e. registry.stage.redhat.io from .cephci.yaml.
-            registry_url = ""
-            logger.info(
-                f"RH build: image host is {image_registry!r}; "
-                "registry-url will be taken from credential file"
-            )
+        registry_url = image_registry
+        logger.info(
+            f"Auto-detected registry {registry_url} from container image, adding credentials"
+        )
 
-        if registry_url or manifest_obj.product in ("ibm", "redhat"):
+        if registry_url or manifest_obj.product == "ibm":
             cmd += construct_registry(
                 self,
                 registry_url,
