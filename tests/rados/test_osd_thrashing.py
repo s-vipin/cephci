@@ -1423,6 +1423,7 @@ def run(ceph_cluster, **kw):
         )  # smb_client_io
         log.debug("ThreadPoolExecutor max_workers: %s", max_workers)
 
+        cluster_fsid = rados_obj.run_ceph_command(cmd="ceph fsid")["fsid"]
         with cf.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = []
 
@@ -1567,6 +1568,7 @@ def run(ceph_cluster, **kw):
                         osd_list=osd_list,
                         iterations=iterations // 2,
                         stop_flag=stop_flag,
+                        cluster_fsid=cluster_fsid,
                     )
                 )
 
