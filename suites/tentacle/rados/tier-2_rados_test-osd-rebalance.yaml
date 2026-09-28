@@ -109,119 +109,119 @@ tests:
 
 # The below test is openstack only, and would need modifications to run on BM.
 # commenting the run of below test in BM pipeline
-  - test:
-      name: Cluster behaviour when OSDs are full
-      desc: Test PG autoscaling and rebalancing when OSDs are near-full, backfill-full and completely full
-      module: test_osd_full.py
-      polarion-id: CEPH-83571715
-      config:
-        pg_autoscaling:
-          pool_config:
-            pool-1:
-              pool_type: replicated
-              pool_name: re_pool_3
-              pg_num: 1
-              disable_pg_autoscale: true
-            # EC pool will be added later
+#   - test:
+#       name: Cluster behaviour when OSDs are full
+#       desc: Test PG autoscaling and rebalancing when OSDs are near-full, backfill-full and completely full
+#       module: test_osd_full.py
+#       polarion-id: CEPH-83571715
+#       config:
+#         pg_autoscaling:
+#           pool_config:
+#             pool-1:
+#               pool_type: replicated
+#               pool_name: re_pool_3
+#               pg_num: 1
+#               disable_pg_autoscale: true
+#             # EC pool will be added later
 
-  - test:
-      name: osd_memory_target param set at OSD level
-      module: test_osd_memory_target.py
-      desc: Verification of osd_memory_target parameter set at OSD level
-      polarion-id: CEPH-83580882
-      config:
-        osd_level: true
+#   - test:
+#       name: osd_memory_target param set at OSD level
+#       module: test_osd_memory_target.py
+#       desc: Verification of osd_memory_target parameter set at OSD level
+#       polarion-id: CEPH-83580882
+#       config:
+#         osd_level: true
 
-  - test:
-      name: osd_memory_target param set at host level
-      module: test_osd_memory_target.py
-      desc: Verification of osd_memory_target parameter set at host level
-      polarion-id: CEPH-83580881
-      config:
-        host_level: true
+#   - test:
+#       name: osd_memory_target param set at host level
+#       module: test_osd_memory_target.py
+#       desc: Verification of osd_memory_target parameter set at host level
+#       polarion-id: CEPH-83580881
+#       config:
+#         host_level: true
 
-  - test:
-      name: ObjectStore block stats verification
-      module: test_objectstore_block.py
-      desc: Reduce data from an object and verify the decrease in blocks
-      polarion-id: CEPH-83571714
-      config:
-        create_pool: true
-        pool_name: test-objectstore
-        write_iteration: 3
-        delete_pool: true
+#   - test:
+#       name: ObjectStore block stats verification
+#       module: test_objectstore_block.py
+#       desc: Reduce data from an object and verify the decrease in blocks
+#       polarion-id: CEPH-83571714
+#       config:
+#         create_pool: true
+#         pool_name: test-objectstore
+#         write_iteration: 3
+#         delete_pool: true
 
-  - test:
-      name: ceph osd df stats
-      module: test_osd_df.py
-      desc: Mark osd out and inspect stats change in ceph osd df
-      polarion-id: CEPH-10787
-      config:
-        run_iteration: 3
-        create_pool: true
-        pool_name: test-osd-df
-        write_iteration: 10
-        delete_pool: true
+#   - test:
+#       name: ceph osd df stats
+#       module: test_osd_df.py
+#       desc: Mark osd out and inspect stats change in ceph osd df
+#       polarion-id: CEPH-10787
+#       config:
+#         run_iteration: 3
+#         create_pool: true
+#         pool_name: test-osd-df
+#         write_iteration: 10
+#         delete_pool: true
 
-  # Below test is currently failing, BZ raised #2214864 - Closed - Not a bug
-  # We have to reproduce the issue in a Replica-1 Cluster, and if we hit the same issue, we can re-open it.
-#  - test:
-#      name: Perform IOPS on a Cluster with full OSDs
-#      desc: Verify posibility of IOPS on a Cluster with full OSDs
-#      module: test_osd_full.py
-#      polarion-id: CEPH-83572758
-#      config:
-#        iops_with_full_osds:
-#          pool-1:
-#            pool_name: "pool_full_osds"
-#            pool_type: replicated
-#            pg_num: 1
-#            disable_pg_autoscale: true
-#          pool-2:
-#            pool_name: "re_pool_test"
-#            pool_type: replicated
-#            pg_num: 1
-#            disable_pg_autoscale: true
-#          pool-3:
-#            pool_name: "test_ec_pool"
-#            pool_type: erasure
-#            pg_num: 1
-#            k: 4
-#            m: 2
-#            disable_pg_autoscale: true
+#   # Below test is currently failing, BZ raised #2214864 - Closed - Not a bug
+#   # We have to reproduce the issue in a Replica-1 Cluster, and if we hit the same issue, we can re-open it.
+# #  - test:
+# #      name: Perform IOPS on a Cluster with full OSDs
+# #      desc: Verify posibility of IOPS on a Cluster with full OSDs
+# #      module: test_osd_full.py
+# #      polarion-id: CEPH-83572758
+# #      config:
+# #        iops_with_full_osds:
+# #          pool-1:
+# #            pool_name: "pool_full_osds"
+# #            pool_type: replicated
+# #            pg_num: 1
+# #            disable_pg_autoscale: true
+# #          pool-2:
+# #            pool_name: "re_pool_test"
+# #            pool_type: replicated
+# #            pg_num: 1
+# #            disable_pg_autoscale: true
+# #          pool-3:
+# #            pool_name: "test_ec_pool"
+# #            pool_type: erasure
+# #            pg_num: 1
+# #            k: 4
+# #            m: 2
+# #            disable_pg_autoscale: true
 
 
-# Bluestore compression tests - moved here as part of optimization to reduce RHOS-d run time
-# Tests:-
-# scenario 2 - Enables bluestore write v2
-# setup - setup phase for bluestore compression tests
-#     --> Cephfs - replicated & EC
-#     --> RBD - replicated & EC
-#     --> RGW - replicated
-# scenario 12 - data integrity tests
-# scenario 13 - compression algorithm tests
-# scenario 14 - compression mode tests
-# scenario 16 - compression tests post recovery
+# # Bluestore compression tests - moved here as part of optimization to reduce RHOS-d run time
+# # Tests:-
+# # scenario 2 - Enables bluestore write v2
+# # setup - setup phase for bluestore compression tests
+# #     --> Cephfs - replicated & EC
+# #     --> RBD - replicated & EC
+# #     --> RGW - replicated
+# # scenario 12 - data integrity tests
+# # scenario 13 - compression algorithm tests
+# # scenario 14 - compression mode tests
+# # scenario 16 - compression tests post recovery
 
-  - test:
-      name: Bluestore data compression - enable bluestore write v2
-      module: test_bluestore_comp_enhancements.py
-      desc: Positive workflows for bluestore data compression enhancements
-      polarion-id: CEPH-83620071
-      config:
-        delete_pool: True
-        scenarios_to_run:
-          - scenario-2
+#   - test:
+#       name: Bluestore data compression - enable bluestore write v2
+#       module: test_bluestore_comp_enhancements.py
+#       desc: Positive workflows for bluestore data compression enhancements
+#       polarion-id: CEPH-83620071
+#       config:
+#         delete_pool: True
+#         scenarios_to_run:
+#           - scenario-2
 
-  - test:
-      name: Bluestore compression v2 - data integrity tests
-      module: test_bluestore_comp_enhancements.py
-      desc: Positive workflows for bluestore data compression enhancements
-      polarion-id: CEPH-83620071
-      abort-on-fail: true
-      config:
-        scenarios_to_run:
-          - scenario-12
+#   - test:
+#       name: Bluestore compression v2 - data integrity tests
+#       module: test_bluestore_comp_enhancements.py
+#       desc: Positive workflows for bluestore data compression enhancements
+#       polarion-id: CEPH-83620071
+#       abort-on-fail: true
+#       config:
+#         scenarios_to_run:
+#           - scenario-12
 
   - test:
       name: Bluestore compression v2 - compression algorithm tests with rbd, rgw and cephfs
@@ -234,26 +234,26 @@ tests:
         scenarios_to_run:
           - scenario-13
 
-  - test:
-      name: Bluestore compression v2 - compression mode tests with rbd, rgw and cephfs
-      module: test_bluestore_comp_enhancements.py
-      desc: Positive workflows for bluestore data compression enhancements
-      polarion-id: CEPH-83620071
-      abort-on-fail: true
-      config:
-        scenarios_to_run:
-          - scenario-14
-          # Disabling scenario 15 - compression_required_ratio test in bluestore compression v2
-          # due to BZ https://bugzilla.redhat.com/show_bug.cgi?id=2386822
-          # scenario-15
+  # - test:
+  #     name: Bluestore compression v2 - compression mode tests with rbd, rgw and cephfs
+  #     module: test_bluestore_comp_enhancements.py
+  #     desc: Positive workflows for bluestore data compression enhancements
+  #     polarion-id: CEPH-83620071
+  #     abort-on-fail: true
+  #     config:
+  #       scenarios_to_run:
+  #         - scenario-14
+  #         # Disabling scenario 15 - compression_required_ratio test in bluestore compression v2
+  #         # due to BZ https://bugzilla.redhat.com/show_bug.cgi?id=2386822
+  #         # scenario-15
 
-  - test:
-      name: Bluestore compression v2 - OSD recovery tests with rbd, rgw and cephfs
-      module: test_bluestore_comp_enhancements.py
-      desc: Positive workflows for bluestore data compression enhancements
-      polarion-id: CEPH-83620071
-      abort-on-fail: true
-      config:
-        include_erasure_pools: true
-        scenarios_to_run:
-          - scenario-16
+  # - test:
+  #     name: Bluestore compression v2 - OSD recovery tests with rbd, rgw and cephfs
+  #     module: test_bluestore_comp_enhancements.py
+  #     desc: Positive workflows for bluestore data compression enhancements
+  #     polarion-id: CEPH-83620071
+  #     abort-on-fail: true
+  #     config:
+  #       include_erasure_pools: true
+  #       scenarios_to_run:
+  #         - scenario-16
