@@ -305,9 +305,8 @@ def install_prereq(
             raise ConfigError("Firewall not active")
         log.info("Firewall is active")
 
-    # Login to CDN (+ optional custom-config) registries after any reboot
-    # (RHEL-8+ qdisc / FIPS) so docker/podman auth survives restarts and is
-    # present on every node before bootstrap / monitoring pulls.
+    # Login to CDN registries after any reboot (RHEL-8+ qdisc / FIPS) so
+    # docker/podman auth is present on every node for later pulls/upgrades.
     registry_login(ceph, distro_ver, test_data, cloud_type=cloud_type)
 
     # Enable coredump collection
@@ -469,29 +468,74 @@ def enable_rhel_eus_rpms(ceph, distro_ver):
     ceph.exec_command(sudo=True, cmd="yum clean all", long_running=True)
 
 
-# CDN registries logged into on every node during install_prereq (post-reboot).
-# Avoids unauthorized pulls when monitoring defaults still target cp.icr.io while
-# bootstrap authenticates against preprod / stage hosts.
-CDN_REGISTRY_HOSTS = (
-    "registry.redhat.io",
-    "cp.icr.io",
-)
+def _collect_cdn_registry_auths():
+    """
+    Resolve CDN registry credentials for RH and IBM from ~/.cephci.yaml.
+
+    Hosts covered:
+      - registry.redhat.io (RH CDN / released)
+      - cp.icr.io (IBM CDN / released)
+
+    Uses resolve_registry_login_args() so nested credentials.registry.<vendor>.cdn|cp
+    and legacy flat keys are honored. Missing credentials for a host are skipped.
+    """
+    from ceph.ceph_admin.bootstrap import resolve_registry_login_args
+
+    # (registry host, product) — product selects ibm vs rh credential tree.
+    cdn_hosts = (
+        ("registry.redhat.io", "redhat"),
+        ("cp.icr.io", "ibm"),
+    )
+    auths = {}
+    for host, product in cdn_hosts:
+        try:
+            reg_args = resolve_registry_login_args(
+                host, product=product, build_type="released"
+            )
+        except Exception as err:
+            log.warning("Skipping CDN registry %s: %s", host, err)
+            continue
+
+        user = reg_args.get("registry-username")
+        passwd = reg_args.get("registry-password")
+        url = reg_args.get("registry-url") or host
+        if not user or not passwd:
+            log.warning(
+                "Skipping CDN registry %s: username/password missing in cephci config",
+                host,
+            )
+            continue
+
+        b64_auth = base64.b64encode(f"{user}:{passwd}".encode("ascii"))
+        auths[url] = {"auth": b64_auth.decode("utf-8")}
+        log.info("Prepared CDN registry auth for %s", url)
+
+    # Optional legacy top-level registry_credentials entry (non-CDN override).
+    config = get_cephci_config()
+    legacy = config.get("registry_credentials") or {}
+    legacy_reg = legacy.get("registry")
+    if (
+        legacy_reg
+        and legacy_reg not in auths
+        and legacy.get("username")
+        and legacy.get("password")
+    ):
+        b64_auth = base64.b64encode(
+            f"{legacy['username']}:{legacy['password']}".encode("ascii")
+        )
+        auths[legacy_reg] = {"auth": b64_auth.decode("utf-8")}
+        log.info("Prepared legacy registry auth for %s", legacy_reg)
+
+    return auths
 
 
 def registry_login(ceph, distro_ver, test_data=None, cloud_type="openstack"):
     """
-    Login to CDN (+ optional run-specific) container registries on this node.
+    Login to CDN container registries on this node.
 
-    Always attempts CDN hosts (``registry.redhat.io``, ``cp.icr.io``) so auth is
-    present before bootstrap / monitoring pulls. Additional hosts come from
-    --custom-config keys:
-      - bootstrap-registry
-      - upgrade-registry
-      - registries (comma-separated list)
-
-    Credentials are loaded from the host-keyed ``registries:`` section in
-    ~/.cephci.yaml. Called after any install_prereq reboot so credentials
-    survive qdisc / FIPS restarts.
+    Installs docker/podman and writes auth for RH (registry.redhat.io) and IBM
+    (cp.icr.io) CDN registries into docker/podman config.json. Called after any
+    install_prereq reboot so credentials survive qdisc/FIPS restarts.
     """
     _ = cloud_type  # retained for call-site compatibility
     container = "podman"
@@ -505,61 +549,10 @@ def registry_login(ceph, distro_ver, test_data=None, cloud_type="openstack"):
     if container == "docker":
         ceph.exec_command(cmd="sudo systemctl restart docker", long_running=True)
 
-    custom_dict = {}
-    if test_data:
-        custom_dict = test_data.get("custom_config_dict") or {}
-        if not custom_dict and test_data.get("custom-config"):
-            custom_dict = parse_custom_config_list(test_data.get("custom-config"))
-
-    # Explicit custom-config hosts (fail hard if credentials missing).
-    explicit_hosts = set()
-    for key in ("bootstrap-registry", "upgrade-registry"):
-        if custom_dict.get(key):
-            explicit_hosts.add(custom_dict[key].strip())
-    if custom_dict.get("registries"):
-        for host in str(custom_dict["registries"]).split(","):
-            host = host.strip()
-            if host:
-                explicit_hosts.add(host)
-
-    auths = {}
-
-    # CDN hosts: best-effort so missing YAML keys do not abort prereq.
-    for host in CDN_REGISTRY_HOSTS:
-        try:
-            reg_args = resolve_registry_login(host)
-        except KeyError as err:
-            log.warning("Skipping CDN registry %s: %s", host, err)
-            continue
-        user = reg_args.get("registry-username")
-        passwd = reg_args.get("registry-password")
-        if not user or not passwd:
-            log.warning(
-                "Skipping CDN registry %s: username/password missing in cephci config",
-                host,
-            )
-            continue
-        b64_auth = base64.b64encode(f"{user}:{passwd}".encode("ascii"))
-        auths[host] = {"auth": b64_auth.decode("utf-8")}
-        log.info("Prepared CDN registry auth for %s", host)
-
-    # Explicit hosts from custom-config (required when requested).
-    for host in sorted(explicit_hosts):
-        if host in auths:
-            continue
-        try:
-            reg_args = resolve_registry_login(host)
-        except KeyError as err:
-            raise ConfigError(str(err)) from err
-        user = reg_args["registry-username"]
-        passwd = reg_args["registry-password"]
-        b64_auth = base64.b64encode(f"{user}:{passwd}".encode("ascii"))
-        auths[host] = {"auth": b64_auth.decode("utf-8")}
-        log.info("Prepared auth for registry host %s", host)
-
+    auths = _collect_cdn_registry_auths()
     if not auths:
         log.warning(
-            "No registry credentials resolved; skipping registry login on %s",
+            "No CDN registry credentials resolved; skipping registry login on %s",
             ceph.hostname,
         )
         return
@@ -589,6 +582,11 @@ def registry_login(ceph, distro_ver, test_data=None, cloud_type="openstack"):
         file.write(json.dumps(auths_dict, indent=4))
         file.flush()
         file.close()
+    log.info(
+        "CDN registry login written on %s for: %s",
+        ceph.hostname,
+        ", ".join(sorted(auths)),
+    )
 
     log.info(
         "Registry login written on %s for: %s",
