@@ -57,6 +57,18 @@ def run(ceph_cluster, **kw):
             url, _ = cephadm.shell(["ceph dashboard get-prometheus-api-host"])
             log.info(f"Promethues api host: {url}")
             url = f"http://{prom_node.ip_address}:9095"
+            prom_node.exec_command(
+                sudo=True,
+                cmd="sudo firewall-cmd --zone=public --add-port=9095/tcp",
+                pretty_print=True,
+                verbose=True,
+            )
+            prom_node.exec_command(
+                sudo=True,
+                cmd="sudo firewall-cmd --list-ports",
+                pretty_print=True,
+                verbose=True,
+            )
 
             daemon_list = config["prometheus_metrics"].get(
                 "daemons", ["mon", "mgr", "osd"]
