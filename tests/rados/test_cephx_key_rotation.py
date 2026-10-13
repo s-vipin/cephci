@@ -153,8 +153,14 @@ class CephxRotation:
     def step1_confirm_upgrade_complete(self):
         log.info("Step 1: confirm upgrade is complete and aes256k is allowed")
         log.info(self.ceph("version"))
-        if self.ceph("orch upgrade status", as_json=True).get("in_progress"):
+        # Some builds print plain text ("There are no upgrades in progress currently.")
+        # even with -f json, so only parse the output when it is JSON.
+        status = self.ceph("orch upgrade status -f json").strip()
+        log.info(f"Upgrade status: {status}")
+        if status.startswith("{") and loads(status).get("in_progress"):
             raise AssertionError("Upgrade is still in progress")
+        if not status.startswith("{") and "no upgrades in progress" not in status:
+            raise AssertionError(f"Unexpected upgrade status output: {status}")
         if self.cipher not in self.cipher_settings().get("auth_allowed_ciphers", []):
             raise AssertionError(
                 f"{self.cipher} absent from auth_allowed_ciphers - not a CephX capable build"
