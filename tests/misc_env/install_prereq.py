@@ -3,6 +3,8 @@ import json
 import re
 import time
 
+from packaging.version import InvalidVersion, Version
+
 from ceph.parallel import parallel
 from ceph.utils import config_ntp, enable_coredump, is_client, update_ca_cert
 from ceph.waiter import WaitUntil
@@ -120,21 +122,19 @@ def run(**kw):
             )
             time.sleep(20)
 
-    # TODO: remove this method once the openssl issue resolved in
-    # upstream tentacle build, https://tracker.ceph.com/issues/71250
-    if (
-        config.get("build_type") == "upstream"
-        and config.get("upstream_build") == "tentacle"
-    ):
-        with parallel() as p:
-            for ceph in ceph_nodes:
-                if not is_client(ceph):
+    # TODO: remove once BaseOS openssl provides OPENSSL_3.4.0 / >= 3.5.1
+    # on all supported RHEL 9 minors (upstream tentacle + IBM client installs).
+    # https://tracker.ceph.com/issues/71250
+    with parallel() as p:
+        for ceph in ceph_nodes:
+            if not is_client(ceph):
+                continue
+            try:
+                if int(os_major_version(ceph)) != 9:
                     continue
-
-                p.spawn(
-                    workaround_openssl_issue,
-                    ceph,
-                )
+            except Exception:
+                continue
+            p.spawn(workaround_openssl_issue, ceph)
     return 0
 
 
@@ -617,27 +617,88 @@ def update_iptables(node):
         log.error(f"iptables rpm do not exist... error : {err}")
 
 
+# Minimum openssl that provides libcrypto.so.3(OPENSSL_3.4.0) for ceph-common.
+OPENSSL_MIN_VERSION = Version("3.5.1")
+# Latest matching NVR set from CentOS Stream 9 CDN (BaseOS + AppStream).
+OPENSSL_CDN_NVR = "3.5.8-1.el9"
+OPENSSL_CDN_BASEOS = (
+    "https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages"
+)
+OPENSSL_CDN_APPSTREAM = (
+    "https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages"
+)
+
+
+def _installed_openssl_version(node):
+    """Return installed openssl Version, or None if not installed / unparsable."""
+    out, err = node.exec_command(cmd="rpm -q openssl", check_ec=False)
+    pkg = (out or err or "").strip().splitlines()
+    pkg = pkg[0] if pkg else ""
+    if not pkg or "not installed" in pkg:
+        log.info("openssl package not installed on %s", node.hostname)
+        return None
+    # e.g. openssl-3.2.2-6.el9_4.x86_64
+    match = re.search(r"^openssl-(\d+\.\d+\.\d+)", pkg)
+    if not match:
+        log.warning("Unable to parse openssl RPM query output: %s", pkg)
+        return None
+    try:
+        return Version(match.group(1))
+    except InvalidVersion:
+        log.warning("Invalid openssl version from RPM query: %s", pkg)
+        return None
+
+
 def workaround_openssl_issue(node) -> None:
     """
-    Workaround for the openssl issue in RHEL 9.0
-    This is a temporary fix to install openssl-libs package
-    for tentacle upstream build.
+    Upgrade openssl packages when installed version is below 3.5.1.
+
+    ceph-common on RHEL 9 requires libcrypto.so.3(OPENSSL_3.4.0), which is
+    provided by openssl-libs >= 3.5.1. Older RHEL 9.4/9.6 BaseOS streams do
+    not ship that symbol; pull openssl, openssl-libs, and openssl-devel from
+    the CentOS Stream 9 CDN and force-install them.
 
     NOTE:
-        remove this method once the openssl issue resolved in
-        upstream tentacle build, https://tracker.ceph.com/issues/71250
+        Remove once supported RHEL 9 BaseOS streams provide OPENSSL_3.4.0.
+        https://tracker.ceph.com/issues/71250
 
     Args:
         node: client node object
     """
+    current = _installed_openssl_version(node)
+    if current is not None and current >= OPENSSL_MIN_VERSION:
+        log.info(
+            "openssl %s on %s already >= %s; skip CDN upgrade",
+            current,
+            node.hostname,
+            OPENSSL_MIN_VERSION,
+        )
+        return
 
-    openssl_url = (
-        "https://mirror.stream.centos.org/9-stream/BaseOS/"
-        "x86_64/os/Packages/openssl-libs-3.5.1-1.el9.x86_64.rpm"
+    log.info(
+        "openssl %s on %s is below %s; installing %s from CDN",
+        current if current is not None else "missing",
+        node.hostname,
+        OPENSSL_MIN_VERSION,
+        OPENSSL_CDN_NVR,
     )
-    node.exec_command(cmd=f"wget {openssl_url}", sudo=True, long_running=True)
+
+    rpms = [
+        f"{OPENSSL_CDN_BASEOS}/openssl-libs-{OPENSSL_CDN_NVR}.x86_64.rpm",
+        f"{OPENSSL_CDN_BASEOS}/openssl-{OPENSSL_CDN_NVR}.x86_64.rpm",
+        f"{OPENSSL_CDN_APPSTREAM}/openssl-devel-{OPENSSL_CDN_NVR}.x86_64.rpm",
+    ]
+    rpm_names = [url.rsplit("/", 1)[-1] for url in rpms]
+
+    for url in rpms:
+        node.exec_command(cmd=f"wget -q {url}", sudo=True, long_running=True)
+
+    # Install together so openssl / openssl-libs / openssl-devel stay in sync.
     node.exec_command(
-        cmd="rpm --force -i openssl-libs-3.5.1-1.el9.x86_64.rpm",
+        cmd=f"rpm --force -Uvh {' '.join(rpm_names)}",
         sudo=True,
         long_running=True,
     )
+
+    upgraded = _installed_openssl_version(node)
+    log.info("openssl after CDN upgrade on %s: %s", node.hostname, upgraded)
