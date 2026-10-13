@@ -170,6 +170,19 @@ def get_ceph_var_logs(cluster, log_dir):
     download_dir = os.path.join(log_dir, "ceph_logs")
     os.makedirs(download_dir, exist_ok=True)
     for node in cluster.get_nodes():
+        # Nodes without any deployed Ceph daemon (e.g. spare nodes) have no log dir
+        _, _, rc, _ = node.exec_command(
+            cmd=f"test -d /{_CEPH_VAR_LOG_DIR}",
+            sudo=True,
+            check_ec=False,
+            verbose=True,
+        )
+        if rc != 0:
+            log.info(
+                f"Skipping log collection on {node.hostname}: no /{_CEPH_VAR_LOG_DIR}"
+            )
+            continue
+
         tar_file = f"{node.hostname}-cephlog.tar"
         node.exec_command(
             cmd=f"tar -C / --warning=no-file-changed -cvzf {tar_file} {_CEPH_VAR_LOG_DIR}",
