@@ -552,13 +552,15 @@ def update_iptables(node):
 
 # Minimum openssl that provides libcrypto.so.3(OPENSSL_3.4.0) for ceph-common.
 OPENSSL_MIN_VERSION = Version("3.5.1")
-# Latest matching NVR set from CentOS Stream 9 CDN (BaseOS + AppStream).
-OPENSSL_CDN_NVR = "3.5.8-1.el9"
+# Latest matching NVR set from RHEL 9 UBI CDN (BaseOS + AppStream).
+OPENSSL_CDN_NVR = "3.5.8-2.el9_8"
 OPENSSL_CDN_BASEOS = (
-    "https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages"
+    "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/"
+    "x86_64/baseos/os/Packages/o"
 )
 OPENSSL_CDN_APPSTREAM = (
-    "https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages"
+    "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/"
+    "x86_64/appstream/os/Packages/o"
 )
 
 
@@ -589,7 +591,7 @@ def workaround_openssl_issue(node) -> None:
     ceph-common on RHEL 9 requires libcrypto.so.3(OPENSSL_3.4.0), which is
     provided by openssl-libs >= 3.5.1. Older RHEL 9.4/9.6 BaseOS streams do
     not ship that symbol; pull openssl, openssl-libs, and openssl-devel from
-    the CentOS Stream 9 CDN and force-install them.
+    the RHEL 9 UBI CDN and force-install them.
 
     NOTE:
         Remove once supported RHEL 9 BaseOS streams provide OPENSSL_3.4.0.
