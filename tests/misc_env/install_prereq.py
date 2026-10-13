@@ -6,7 +6,7 @@ import time
 from packaging.version import InvalidVersion, Version
 
 from ceph.parallel import parallel
-from ceph.utils import config_ntp, enable_coredump, is_client, update_ca_cert
+from ceph.utils import config_ntp, enable_coredump, update_ca_cert
 from ceph.waiter import WaitUntil
 from cli.exceptions import ConfigError
 from cli.utilities.packages import Package
@@ -124,11 +124,12 @@ def run(**kw):
 
     # TODO: remove once BaseOS openssl provides OPENSSL_3.4.0 / >= 3.5.1
     # on all supported RHEL 9 minors (upstream tentacle + IBM client installs).
+    # Applied to every RHEL 9 node, not only client-only nodes: suites such as RGW
+    # install ceph-common on server nodes as well. The workaround is a no-op when
+    # openssl is already >= OPENSSL_MIN_VERSION.
     # https://tracker.ceph.com/issues/71250
     with parallel() as p:
         for ceph in ceph_nodes:
-            if not is_client(ceph):
-                continue
             try:
                 if int(os_major_version(ceph)) != 9:
                     continue
@@ -377,7 +378,9 @@ def log_host_environment(node, stage=""):
     else:
         fips_state = f"unknown ({fips_proc})"
     podman = _cmd_out(node, "podman --version")
-    roles = ",".join(getattr(getattr(node, "role", None), "role_list", []) or []) or "n/a"
+    roles = (
+        ",".join(getattr(getattr(node, "role", None), "role_list", []) or []) or "n/a"
+    )
 
     log.info("=" * 72)
     log.info("Host environment%s — %s", stage_tag, node.hostname)
