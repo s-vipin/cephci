@@ -178,6 +178,7 @@ def install_prereq(
     log.info(
         "distro version_id: {version_id}".format(version_id=distro_info["VERSION_ID"])
     )
+    log_host_environment(ceph, stage="prereq-start")
 
     # Remove apache-arrow.repo for baremetal
     cmd_remove_apache_arrow = "sudo rm -f /etc/yum.repos.d/apache-arrow.repo"
@@ -328,6 +329,69 @@ def install_prereq(
                 log.error(
                     f"Failed to distribute podman auth file to {ceph.hostname}: {e}"
                 )
+
+    # Final snapshot after FIPS / firewall / registry work.
+    log_host_environment(ceph, stage="prereq-end")
+
+
+def _cmd_out(node, cmd, sudo=False):
+    """Run a command for logging; never raise. Returns stripped stdout/stderr."""
+    try:
+        out, err = node.exec_command(cmd=cmd, sudo=sudo, check_ec=False)
+        text = (out or err or "").strip()
+        return text.splitlines()[0].strip() if text else "n/a"
+    except Exception as exc:
+        log.debug("env probe failed on %s (%s): %s", node.hostname, cmd, exc)
+        return "n/a"
+
+
+def log_host_environment(node, stage=""):
+    """
+    Log OS / kernel / OpenSSL / FIPS and related host details.
+
+    Safe for parallel prereq runs; probes use check_ec=False so logging cannot
+    fail the suite.
+    """
+    stage_tag = f" [{stage}]" if stage else ""
+    try:
+        distro = getattr(node, "distro_info", None) or {}
+    except Exception:
+        distro = {}
+
+    pretty = distro.get("PRETTY_NAME") or _cmd_out(
+        node, "grep ^PRETTY_NAME= /etc/os-release | cut -d= -f2- | tr -d '\"'"
+    )
+    name = distro.get("NAME") or "n/a"
+    version_id = distro.get("VERSION_ID") or "n/a"
+    distro_id = distro.get("ID") or "n/a"
+
+    kernel = _cmd_out(node, "uname -r")
+    arch = _cmd_out(node, "uname -m")
+    openssl_rpm = _cmd_out(node, "rpm -q openssl")
+    openssl_libs = _cmd_out(node, "rpm -q openssl-libs")
+    openssl_ver = _cmd_out(node, "openssl version")
+    fips_proc = _cmd_out(node, "cat /proc/sys/crypto/fips_enabled", sudo=True)
+    if fips_proc == "1":
+        fips_state = "enabled"
+    elif fips_proc == "0":
+        fips_state = "disabled"
+    else:
+        fips_state = f"unknown ({fips_proc})"
+    podman = _cmd_out(node, "podman --version")
+    roles = ",".join(getattr(getattr(node, "role", None), "role_list", []) or []) or "n/a"
+
+    log.info("=" * 72)
+    log.info("Host environment%s — %s", stage_tag, node.hostname)
+    log.info("  distro          : %s (%s %s)", pretty, distro_id, version_id)
+    log.info("  distro name     : %s", name)
+    log.info("  kernel          : %s (%s)", kernel, arch)
+    log.info("  openssl rpm     : %s", openssl_rpm)
+    log.info("  openssl-libs    : %s", openssl_libs)
+    log.info("  openssl version : %s", openssl_ver)
+    log.info("  fips            : %s (fips_enabled=%s)", fips_state, fips_proc)
+    log.info("  podman          : %s", podman)
+    log.info("  roles           : %s", roles)
+    log.info("=" * 72)
 
 
 def setup_addition_repo(ceph, repo):
@@ -669,6 +733,7 @@ def workaround_openssl_issue(node) -> None:
     Args:
         node: client node object
     """
+    log_host_environment(node, stage="openssl-check")
     current = _installed_openssl_version(node)
     if current is not None and current >= OPENSSL_MIN_VERSION:
         log.info(
@@ -706,3 +771,4 @@ def workaround_openssl_issue(node) -> None:
 
     upgraded = _installed_openssl_version(node)
     log.info("openssl after CDN upgrade on %s: %s", node.hostname, upgraded)
+    log_host_environment(node, stage="openssl-upgraded")
