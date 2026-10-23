@@ -372,11 +372,18 @@ def get_stretch_site_hosts(rados_obj, tiebreaker_mon_site_name) -> tuple:
             ]
         """
         mons = rados_obj.run_ceph_command("ceph mon dump")
-        site_mons = [
-            d
-            for d in mons["mons"]
-            if d.get("crush_location") == "{datacenter=" + site_name + "}"
-        ]
+        if float(rados_obj.rhbuild.split("-")) >= 9.2:
+            site_mons = [
+                d
+                for d in mons["mons"]
+                if len(d.get("crush_location")) > 0 and d.get("crush_location")[0].get("val") == site_name
+            ]
+        else:
+            site_mons = [
+                d
+                for d in mons["mons"]
+                if d.get("crush_location") == "{datacenter=" + site_name + "}"
+            ]
         return site_mons
 
     # Getting the mon hosts for both the DCs from the mon dump
