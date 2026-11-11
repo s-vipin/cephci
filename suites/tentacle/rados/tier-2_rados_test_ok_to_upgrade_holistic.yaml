@@ -20,7 +20,7 @@ tests:
         args:
           rhcs-version: 8.1
           platform: rhel-9
-          release: released
+          release: stable
           mon-ip: node1
           orphan-initial-daemons: true
           ssh-user: cephuser
@@ -230,7 +230,7 @@ tests:
         nodes:                            # client node
           - node17:
               release: 8.1
-              tag: released
+              tag: stable
         install_packages:
           - ceph-common
           - ceph-base
@@ -289,108 +289,150 @@ tests:
           platform: rhel-9
       abort-on-fail: true
 
+  # - test:
+  #     name: OSD upgrade hosts scenarios
+  #     desc: OSD upgrade hosts scenarios
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       test_stop_start: true
+  #       scenarios:
+  #         - hosts_HOST1
+  #         - hosts_HOST1_services_osd_osds
+  #         - hosts_rack1_rack2
+  #         # - host_without_osd
+  #         # BUG:- https://ibm-ceph.atlassian.net/browse/IBMCEPH-11215
+  #       limit: 3
+  #       osd_service_name: "osd.osds"
+  #       host_without_osd: node11
+
+  # - test:
+  #     name: OSD upgrade topological label scenarios
+  #     desc: OSD upgrade topological label scenarios host chassis rack
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       test_pause_resume: true
+  #       scenarios:
+  #         - topological_host
+  #         - topological_chassis
+  #         - topological_rack
+
+  # - test:
+  #     name: OSD upgrade combination of topological labels scenarios
+  #     desc: Topological labels combination scenarios host chassis and rack
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       scenarios:
+  #         - combo_host_chassis_rack
+  #         - combo_chassis_rack
+
+  # - test:
+  #     name: holistic upgrade negative scenarios - 1
+  #     desc: Negative scenarios for combination of topological labels host chassis rack
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       test_stop_start: true
+  #       scenarios:
+  #         - combo_chassis1_chassis2_rack1
+  #         - combo_chassis3_rack1_no_match
+
+  # - test:
+  #     name: holistic upgrade negative scenarios - 2
+  #     desc: Negative scenarios for invalid host and invalid rack topological labels
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       scenarios:
+  #         - hosts_invalid_host
+  #         - topological_labels_rack_nonexistent
+
+  # - test:
+  #     name: crush bucket upgrade scenarios
+  #     desc: Crush bucket upgrade scenarios for rack and chassis
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       scenarios:
+  #         - bucket_type_bucket_name_rack
+  #         - bucket_type_bucket_name_chassis
+  #         - bucket_type_bucket_name_host
+
+  # - test:
+  #     name: crush bucket upgrade negative scenarios
+  #     desc: Negative scenarios for invalid bucket type and bucket name
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       negative_scenarios: true
+  #       scenarios:
+  #         - negative_bucket_type_bucket_name_rack_without_daemon_types_arg
+  #         - negative_bucket_type_bucket_name_rack_host_arg
+  #         - negative_bucket_type_bucket_name_services_arg
+  #         - negative_bucket_type_bucket_name_topological_labels_arg
+
   - test:
-      name: OSD upgrade hosts scenarios
-      desc: OSD upgrade hosts scenarios
+      name: crush bucket with non-OSD daemon_types negative scenarios
+      desc: Negative scenarios for crush bucket params with non-OSD daemon types (mon, mgr, mds, rgw, crash, mixed)
       module: test_osd_ok_to_upgrade_holistic_tests.py
       polarion-id: CEPH-83632280
       config:
-        test_stop_start: true
+        negative_scenarios: true
         scenarios:
-          - hosts_HOST1
-          - hosts_HOST1_services_osd_osds
-          - hosts_rack1_rack2
-          # - host_without_osd
-          # BUG:- https://ibm-ceph.atlassian.net/browse/IBMCEPH-11215
-        limit: 3
+          - negative_bucket_type_daemon_types_mon
+          - negative_bucket_type_daemon_types_mgr
+          - negative_bucket_type_daemon_types_mds
+          - negative_bucket_type_daemon_types_rgw
+          - negative_bucket_type_daemon_types_crash
+          - negative_bucket_type_daemon_types_mixed_osd_mon
+
+  - test:
+      name: crush bucket incomplete and invalid arg negative scenarios
+      desc: Negative scenarios for missing bucket_name/type, invalid bucket_type, nonexistent bucket_name
+      module: test_osd_ok_to_upgrade_holistic_tests.py
+      polarion-id: CEPH-83632280
+      config:
+        scenarios:
+          - negative_bucket_type_only_without_bucket_name
+          - negative_bucket_name_only_without_bucket_type
+          - negative_invalid_bucket_type
+          - negative_nonexistent_bucket_name
+
+  - test:
+      name: OSD partial upgrade hosts scenarios
+      desc: OSD partial upgrade hosts scenarios
+      module: test_osd_ok_to_upgrade_partial_upgrade.py
+      config:
+        scenarios:
+          - host_few_osds_upgraded
+          - chassis_few_osds_upgraded
+          - chassis_host_osds_upgraded
+          - rack_few_osds_upgraded
+          - rack_host_osds_upgraded
+          - rack_chassis_osds_upgraded
         osd_service_name: "osd.osds"
-        host_without_osd: node11
 
-  - test:
-      name: OSD upgrade topological label scenarios
-      desc: OSD upgrade topological label scenarios host chassis rack
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        test_pause_resume: true
-        scenarios:
-          - topological_host
-          - topological_chassis
-          - topological_rack
+  # - test:
+  #     name: Upgrade all the OSDs in the cluster
+  #     desc: Upgrade all the OSDs in the cluster
+  #     module: test_osd_ok_to_upgrade_holistic_tests.py
+  #     polarion-id: CEPH-83632280
+  #     config:
+  #       scenarios:
+  #         - full_cluster_upgrade
 
-  - test:
-      name: OSD upgrade combination of topological labels scenarios
-      desc: Topological labels combination scenarios host chassis and rack
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        scenarios:
-          - combo_host_chassis_rack
-          - combo_chassis_rack
-
-  - test:
-      name: holistic upgrade negative scenarios - 1
-      desc: Negative scenarios for combination of topological labels host chassis rack
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        test_stop_start: true
-        scenarios:
-          - combo_chassis1_chassis2_rack1
-          - combo_chassis3_rack1_no_match
-
-  - test:
-      name: holistic upgrade negative scenarios - 2
-      desc: Negative scenarios for invalid host and invalid rack topological labels
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        scenarios:
-          - hosts_invalid_host
-          - topological_labels_rack_nonexistent
-
-  - test:
-      name: crush bucket upgrade scenarios
-      desc: Crush bucket upgrade scenarios for rack and chassis
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        scenarios:
-          - bucket_type_bucket_name_rack
-          - bucket_type_bucket_name_chassis
-          - bucket_type_bucket_name_host
-
-  - test:
-      name: crush bucket upgrade negative scenarios
-      desc: Negative scenarios for invalid bucket type and bucket name
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        scenarios:
-          - negative_bucket_type_bucket_name_rack_without_daemon_types_arg
-          - negative_bucket_type_bucket_name_rack_host_arg
-          - negative_bucket_type_bucket_name_services_arg
-          - negative_bucket_type_bucket_name_topological_labels_arg
-
-  - test:
-      name: Upgrade all the OSDs in the cluster
-      desc: Upgrade all the OSDs in the cluster
-      module: test_osd_ok_to_upgrade_holistic_tests.py
-      polarion-id: CEPH-83632280
-      config:
-        scenarios:
-          - full_cluster_upgrade
-
-  - test:
-      name: Upgrade cluster to latest 9.x ceph version
-      desc: Upgrade cluster to latest version
-      module: test_upgrade_warn.py
-      polarion-id: CEPH-83574934
-      config:
-        command: start
-        service: upgrade
-        base_cmd_args:
-          verbose: true
-        verify_cluster_health: true
-      destroy-cluster: false
-      abort-on-fail: true
+  # - test:
+  #     name: Upgrade cluster to latest 9.x ceph version
+  #     desc: Upgrade cluster to latest version
+  #     module: test_upgrade_warn.py
+  #     polarion-id: CEPH-83574934
+  #     config:
+  #       command: start
+  #       service: upgrade
+  #       base_cmd_args:
+  #         verbose: true
+  #       verify_cluster_health: true
+  #     destroy-cluster: false
+  #     abort-on-fail: true

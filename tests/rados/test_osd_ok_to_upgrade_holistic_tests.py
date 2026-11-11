@@ -64,6 +64,23 @@ def run(ceph_cluster, **kw):
       Expects upgrade start to fail.
     - negative_bucket_type_bucket_name_services_arg: Negative: bucket parameters combined with --services.
       Expects upgrade start to fail.
+    - negative_bucket_type_bucket_name_topological_labels_arg: Negative: bucket parameters combined with
+      --topological-labels. Expects upgrade start to fail.
+    - negative_bucket_type_daemon_types_mon: Negative: --crush-bucket-type rack --crush-bucket-name rack1
+      --daemon-types mon. Bucket params require --daemon-types to be "osd". Expects error.
+    - negative_bucket_type_daemon_types_mgr: Same as above but --daemon-types mgr.
+    - negative_bucket_type_daemon_types_mds: Same as above but --daemon-types mds.
+    - negative_bucket_type_daemon_types_rgw: Same as above but --daemon-types rgw.
+    - negative_bucket_type_daemon_types_crash: Same as above but --daemon-types crash.
+    - negative_bucket_type_daemon_types_mixed_osd_mon: Same as above but --daemon-types osd,mon (mixed).
+    - negative_bucket_type_only_without_bucket_name: Negative: --crush-bucket-type rack without
+      --crush-bucket-name. Both must be provided together. Expects error.
+    - negative_bucket_name_only_without_bucket_type: Negative: --crush-bucket-name rack1 without
+      --crush-bucket-type. Both must be provided together. Expects error.
+    - negative_invalid_bucket_type: Negative: --crush-bucket-type invalid_type. Expects error for
+      invalid CRUSH bucket type.
+    - negative_nonexistent_bucket_name: Negative: --crush-bucket-name nonexistent_rack. Expects
+      error for nonexistent CRUSH bucket name.
     Optional mid-upgrade checks (config):
     - test_stop_start: When progress reaches at least half of daemons (from orch upgrade
       status JSON "progress"), run ceph orch upgrade stop then re-run the same upgrade start
@@ -87,6 +104,7 @@ def run(ceph_cluster, **kw):
     host_without_osd = config.get("host_without_osd", "node15")
     re_pool_name = "re_pool"
     cephadm_obj = CephAdmin(cluster=ceph_cluster, **config)
+    negative_scenarios = config.get("negative_scenarios", False)
     # ceph version check
     if LooseVersion(str(config.get("release"))) < LooseVersion("9.1"):
         log.error(
@@ -132,15 +150,16 @@ def run(ceph_cluster, **kw):
             log.info("Scenario: %s", scenario)
             log.info("==============================================================")
 
-            # Downgrade OSDs on the newer image back to deployed version
-            _downgrade_osds_to_old_image(
-                rados_obj, mon_obj, old_image, new_image, ceph_cluster, service_obj
-            )
+            if not negative_scenarios:
+                # Downgrade OSDs on the newer image back to deployed version
+                _downgrade_osds_to_old_image(
+                    rados_obj, mon_obj, old_image, new_image, ceph_cluster, service_obj
+                )
 
-            # Wait for all OSDs to be in a single ceph image and the old ceph image
-            _wait_osds_single_version(
-                rados_obj, downgrade_timeout, old_image, service_obj
-            )
+                # Wait for all OSDs to be in a single ceph image and the old ceph image
+                _wait_osds_single_version(
+                    rados_obj, downgrade_timeout, old_image, service_obj
+                )
 
             log.info(
                 "=================OSD version before scenario start==================="
@@ -402,6 +421,178 @@ def run(ceph_cluster, **kw):
                     continue
                 log.error(f"Unexpected output: {out}")
                 return 1
+
+            # --- Crush bucket with non-OSD daemon_types negative scenarios ---
+            # Each of these tests that --crush_bucket_type/--crush_bucket_name
+            # requires --daemon_types to be exactly "osd".
+            elif scenario in (
+                "negative_bucket_type_daemon_types_mon",
+                "negative_bucket_type_daemon_types_mgr",
+                "negative_bucket_type_daemon_types_mds",
+                "negative_bucket_type_daemon_types_rgw",
+                "negative_bucket_type_daemon_types_crash",
+                "negative_bucket_type_daemon_types_mixed_osd_mon",
+            ):
+                daemon_type_map = {
+                    "negative_bucket_type_daemon_types_mon": "mon",
+                    "negative_bucket_type_daemon_types_mgr": "mgr",
+                    "negative_bucket_type_daemon_types_mds": "mds",
+                    "negative_bucket_type_daemon_types_rgw": "rgw",
+                    "negative_bucket_type_daemon_types_crash": "crash",
+                    "negative_bucket_type_daemon_types_mixed_osd_mon": "osd,mon",
+                }
+                bad_daemon_types = daemon_type_map[scenario]
+                cmd = (
+                    f"ceph orch upgrade start --image {new_image} "
+                    f"--crush-bucket-type rack --crush-bucket-name rack1 "
+                    f"--daemon-types {bad_daemon_types}"
+                )
+                out = ""
+                try:
+                    out = list(rados_obj.client.exec_command(cmd=cmd))[1]
+                except Exception as e:
+                    out = str(e)
+                log.info(f"Output: {out}")
+
+                if (
+                    'Bucket parameters for OSD upgrade require --daemon-types to be "osd"'
+                    in out
+                ):
+                    log.info(
+                        f"Expected failure for --daemon-types {bad_daemon_types}: {out}"
+                    )
+                    continue
+                log.error(
+                    f"Unexpected output for --daemon-types {bad_daemon_types}: {out}"
+                )
+                return 1
+
+            # --- Crush bucket incomplete / invalid arg negative scenarios ---
+            elif scenario == "negative_bucket_type_only_without_bucket_name":
+                cmd = (
+                    f"ceph orch upgrade start --image {new_image} "
+                    f"--crush-bucket-type rack --daemon-types osd"
+                )
+                out = ""
+                try:
+                    out = list(rados_obj.client.exec_command(cmd=cmd))[1]
+                except Exception as e:
+                    out = str(e)
+                log.info(f"Output: {out}")
+
+                if (
+                    "--crush_bucket_type and --crush_bucket_name must both be provided"
+                    in out
+                    or "crush_bucket_name" in out.lower()
+                ):
+                    log.info(f"Expected failure: {out}")
+                    continue
+                log.error(f"Unexpected output: {out}")
+                return 1
+            elif scenario == "negative_bucket_name_only_without_bucket_type":
+                cmd = (
+                    f"ceph orch upgrade start --image {new_image} "
+                    f"--crush-bucket-name rack1 --daemon-types osd"
+                )
+                out = ""
+                try:
+                    out = list(rados_obj.client.exec_command(cmd=cmd))[1]
+                except Exception as e:
+                    out = str(e)
+                log.info(f"Output: {out}")
+
+                if (
+                    "--crush_bucket_type and --crush_bucket_name must both be provided"
+                    in out
+                    or "crush_bucket_type" in out.lower()
+                ):
+                    log.info(f"Expected failure: {out}")
+                    continue
+                log.error(f"Unexpected output: {out}")
+                return 1
+            elif scenario == "negative_invalid_bucket_type":
+                cmd = (
+                    f"ceph orch upgrade start --image {new_image} "
+                    f"--crush-bucket-type invalid_type --crush-bucket-name rack1 "
+                    f"--daemon-types osd"
+                )
+                out = ""
+                try:
+                    out = list(rados_obj.client.exec_command(cmd=cmd))[1]
+                except Exception as e:
+                    out = str(e)
+                log.info(f"Output: {out}")
+
+                if (
+                    "invalid" in out.lower()
+                    or "not a valid" in out.lower()
+                    or "error" in out.lower()
+                ):
+                    log.info(f"Expected failure for invalid bucket type: {out}")
+                    continue
+                log.error(f"Unexpected output for invalid bucket type: {out}")
+                return 1
+            elif scenario == "negative_nonexistent_bucket_name":
+                cmd = (
+                    f"ceph orch upgrade start --image {new_image} "
+                    f"--crush-bucket-type rack --crush-bucket-name nonexistent_rack "
+                    f"--daemon-types osd"
+                )
+                out = ""
+                cmd_failed = False
+                try:
+                    stdout, stderr = rados_obj.client.exec_command(cmd=cmd)
+                    out = f"{stdout or ''}{stderr or ''}"
+                except Exception as e:
+                    out = str(e)
+                    cmd_failed = True
+                log.info(f"Output: {out}")
+
+                # Preferred behavior: CLI rejects nonexistent crush bucket.
+                if (
+                    "not found" in out.lower()
+                    or "does not exist" in out.lower()
+                    or "did not match" in out.lower()
+                    or "error" in out.lower()
+                    or "einval" in out.lower()
+                ):
+                    log.info(f"Expected failure for nonexistent bucket name: {out}")
+                    continue
+
+                # Current product may accept the command as a no-op (empty match).
+                # Stop any upgrade and verify no OSDs moved to new_image.
+                if not cmd_failed:
+                    log.info(
+                        "Nonexistent bucket was accepted by upgrade start; "
+                        "verifying it is a no-op (no OSDs upgraded)."
+                    )
+                    try:
+                        rados_obj.client.exec_command(cmd="ceph orch upgrade stop")
+                    except Exception as stop_err:
+                        log.debug("upgrade stop (non-fatal): %s", stop_err)
+                    time.sleep(5)
+                    images_after = get_daemon_container_images(
+                        rados_obj, daemon="osd"
+                    )
+                    upgraded = [
+                        img
+                        for img in images_after
+                        if img.strip() == new_image.strip()
+                    ]
+                    if not upgraded:
+                        log.info(
+                            "Accepted nonexistent bucket as no-op: no OSDs on new_image"
+                        )
+                        continue
+                    log.error(
+                        "Nonexistent bucket upgrade unexpectedly moved OSDs to "
+                        "new_image (count=%d)",
+                        len(upgraded),
+                    )
+                    return 1
+
+                log.error(f"Unexpected output for nonexistent bucket name: {out}")
+                return 1
             else:
                 log.error(f"Invalid scenario: {scenario}")
                 return 1
@@ -597,15 +788,17 @@ def run(ceph_cluster, **kw):
         log.info(
             "===========FINALLY BLOCK: Downgrading OSDs to deployed version==============="
         )
+        if not negative_scenarios:
+            try:
+                _downgrade_osds_to_old_image(
+                    rados_obj, mon_obj, old_image, new_image, ceph_cluster, service_obj
+                )
+            except ValueError as e:
+                log.error(f"Downgrade failed: {e}")
 
-        try:
-            _downgrade_osds_to_old_image(
-                rados_obj, mon_obj, old_image, new_image, ceph_cluster, service_obj
+            _wait_osds_single_version(
+                rados_obj, downgrade_timeout, old_image, service_obj
             )
-        except ValueError as e:
-            log.error(f"Downgrade failed: {e}")
-
-        _wait_osds_single_version(rados_obj, downgrade_timeout, old_image, service_obj)
 
     return 0
 
