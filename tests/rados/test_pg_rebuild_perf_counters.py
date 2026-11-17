@@ -2943,42 +2943,75 @@ def scenario_last_degraded_present(rados_obj, cephadm, config):
     """Verify last_degraded exists on every PG in pg dump.
 
     Test steps:
-        1. Dump all PG stats via get_pg_stats.
-        2. Assert every PG has last_degraded present.
-        3. For active+clean PGs, assert last_degraded <= last_clean.
+        1. Create a replicated pool and an EC pool; write data; wait clean.
+        2. Dump all PG stats via get_pg_stats.
+        3. Assert every PG has last_degraded present.
+        4. For active+clean PGs, assert last_degraded <= last_clean.
            Equality only holds for never-degraded / newly created PGs;
            after a real degradation episode last_degraded stays latched at
            onset while last_clean advances (and may keep refreshing).
     """
-    pg_stats = get_pg_stats(rados_obj)
-    if not pg_stats:
-        raise AssertionError("ceph pg dump returned no pg_stats")
+    pool_obj = PoolFunctions(node=cephadm)
+    client = rados_obj.ceph_cluster.get_nodes(role="client")[0]
+    repl_pool = config.get("repl_pool_name", "dur_lastdeg_repl")
+    ec_pool = config.get("ec_pool_name", "dur_lastdeg_ec")
+    nobj = config.get("nobj", 20)
+    pools = [repl_pool, ec_pool]
 
-    missing = []
-    ordering_errors = []
-    for pg in pg_stats:
-        pgid = pg.get("pgid")
-        last_degraded = extract_pg_history_field(pg, "last_degraded")
-        if last_degraded is None:
-            missing.append(pgid)
-            continue
-        state = str(pg.get("state", ""))
-        if "clean" not in state:
-            continue
-        last_clean = extract_pg_history_field(pg, "last_clean")
-        deg_ts = parse_ceph_ts(last_degraded)
-        clean_ts = parse_ceph_ts(last_clean)
-        if deg_ts is None or clean_ts is None:
-            log.info(f"{pgid}: last_degraded={last_degraded} last_clean={last_clean} (unparseable timestamps)")
-            raise Exception(f"last_degraded or last_clean is empty")
-            continue
-        
+    try:
+        log.info(f"Creating replicated pool {repl_pool}")
+        rados_obj.create_pool(pool_name=repl_pool, pg_num=8, size=3, min_size=1)
+        write_data_to_pool(pool_obj, client, repl_pool, nobj=nobj)
+        time.sleep(10)
+        assert wait_for_recovery(rados_obj, repl_pool)
 
-    if missing:
-        raise AssertionError(
-            f"{len(missing)} PGs missing last_degraded (sample): {missing[:10]}"
+        log.info(f"Creating erasure pool {ec_pool}")
+        rados_obj.create_erasure_pool(
+            pool_name=ec_pool,
+            k=config.get("k", 4),
+            m=config.get("m", 2),
         )
-    log.info(f"last_degraded present on all {len(pg_stats)} PGs")
+        write_data_to_pool(pool_obj, client, ec_pool, nobj=nobj)
+        time.sleep(10)
+        assert wait_for_recovery(rados_obj, ec_pool)
+
+        pg_stats = get_pg_stats(rados_obj)
+        if not pg_stats:
+            raise AssertionError("ceph pg dump returned no pg_stats")
+
+        missing = []
+        ordering_errors = []
+        for pg in pg_stats:
+            pgid = pg.get("pgid")
+            last_degraded = extract_pg_history_field(pg, "last_degraded")
+            if last_degraded is None:
+                missing.append(pgid)
+                continue
+            state = str(pg.get("state", ""))
+            if "clean" not in state:
+                continue
+            last_clean = extract_pg_history_field(pg, "last_clean")
+            deg_ts = parse_ceph_ts(last_degraded)
+            clean_ts = parse_ceph_ts(last_clean)
+            if deg_ts is None or clean_ts is None:
+                log.info(
+                    f"{pgid}: last_degraded={last_degraded} "
+                    f"last_clean={last_clean} (unparseable timestamps)"
+                )
+                raise Exception("last_degraded or last_clean is empty")
+
+        if missing:
+            raise AssertionError(
+                f"{len(missing)} PGs missing last_degraded (sample): {missing[:10]}"
+            )
+        log.info(f"last_degraded present on all {len(pg_stats)} PGs")
+    finally:
+        for pool_name in pools:
+            try:
+                if config.get("delete_pool", True):
+                    rados_obj.delete_pool(pool=pool_name)
+            except Exception:
+                pass
 
 
 def scenario_last_degraded_latch(rados_obj, cephadm, config):
